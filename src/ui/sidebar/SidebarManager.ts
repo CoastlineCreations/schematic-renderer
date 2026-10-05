@@ -361,7 +361,7 @@ export class SidebarManager {
 	 * sidebar without owning a direct reference to it.
 	 */
 	private emitVisibilityChanged(visible: boolean): void {
-		const ee = (this.renderer as any).eventEmitter;
+		const ee = this.renderer.eventEmitter;
 		if (ee && typeof ee.emit === "function") {
 			ee.emit("sidebarVisibilityChanged", {
 				visible,
@@ -534,9 +534,12 @@ export class SidebarManager {
 		};
 	}
 
-	/**
-	 * Check if sidebar is visible (expanded)
-	 */
+	/** Current layout for overlays positioned beside the sidebar. */
+	public getLayout(): Pick<Required<SidebarOptions>, "position" | "width"> {
+		return { position: this.options.position, width: this.options.width };
+	}
+
+	/** Check if sidebar is visible (expanded). */
 	public isVisible(): boolean {
 		return this.visible;
 	}

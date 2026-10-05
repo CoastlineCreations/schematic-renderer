@@ -1,9 +1,10 @@
 // BlockInteractionHandler.ts
 import * as THREE from "three";
 import { EventEmitter } from "events";
-import { SchematicWrapper } from "nucleation";
+import type { SchematicWrapper, BlockStateWrapper } from "../../nucleation/SchematicWrapper";
 import { SchematicManager } from "../SchematicManager";
 import { SimulationManager } from "../SimulationManager";
+import type { SchematicObject } from "../SchematicObject";
 
 export class BlockInteractionHandler {
 	private eventEmitter: EventEmitter;
@@ -22,7 +23,7 @@ export class BlockInteractionHandler {
 
 	private onInteractBlock = async (data: {
 		interactionPosition: THREE.Vector3;
-		schematicObject?: any;
+		schematicObject?: SchematicObject;
 	}) => {
 		const { interactionPosition, schematicObject } = data;
 
@@ -36,7 +37,10 @@ export class BlockInteractionHandler {
 		this.processInteraction(schematicObject, interactionPosition);
 	};
 
-	private async processInteraction(schematicObject: any, interactionPosition: THREE.Vector3) {
+	private async processInteraction(
+		schematicObject: SchematicObject,
+		interactionPosition: THREE.Vector3
+	) {
 		const schematic = schematicObject?.getSchematicWrapper();
 
 		if (!schematic) {
@@ -63,8 +67,8 @@ export class BlockInteractionHandler {
 		// Check if the block is interactive
 		if (blockName === "minecraft:lever") {
 			// If simulation is enabled, use it; otherwise fall back to manual toggle
-			if (this.simulationManager && this.simulationManager.isSimulationActive()) {
-				this.handleSimulatedInteraction(schematicObject, interactionPosition);
+			if (this.simulationManager?.ownsSchematic(schematic)) {
+				await this.handleSimulatedInteraction(interactionPosition);
 			} else {
 				await this.toggleLever(schematic, block, interactionPosition);
 				// Rebuild the full mesh since chunk rebuild doesn't work
@@ -75,7 +79,7 @@ export class BlockInteractionHandler {
 		}
 	}
 
-	private async handleSimulatedInteraction(schematicObject: any, position: THREE.Vector3) {
+	private async handleSimulatedInteraction(position: THREE.Vector3) {
 		if (!this.simulationManager) return;
 
 		// Use simulation to interact with the block - this returns the updated schematic
@@ -89,23 +93,13 @@ export class BlockInteractionHandler {
 			console.warn("Failed to interact with block in simulation");
 			return;
 		}
-
-		// Validation to debug "get_all_palettes" error
-		if (typeof updatedSchematic.get_all_palettes !== "function") {
-			console.warn(
-				"Updated schematic missing get_all_palettes function. Available keys:",
-				Object.keys(Object.getPrototypeOf(updatedSchematic) || updatedSchematic)
-			);
-		}
-
-		// Replace the schematic wrapper with the updated one
-		schematicObject.schematicWrapper = updatedSchematic;
-
-		// Rebuild the mesh to show the change
-		await schematicObject.rebuildMesh();
 	}
 
-	private async toggleLever(schematic: SchematicWrapper, block: any, position: THREE.Vector3) {
+	private async toggleLever(
+		schematic: SchematicWrapper,
+		block: BlockStateWrapper,
+		position: THREE.Vector3
+	) {
 		// Get the current 'powered' state of the lever
 		const properties = block.properties();
 		const blockName = block.name();
@@ -146,6 +140,6 @@ export class BlockInteractionHandler {
 	}
 
 	dispose() {
-		this.eventEmitter.off("interactWithBlock", this.onInteractBlock);
+		this.eventEmitter.off("interactBlock", this.onInteractBlock);
 	}
 }

@@ -1,13 +1,13 @@
 // reactiveProxy.ts
-export interface PropertyConfig<T> {
-	cast?: (value: any) => T;
-	beforeSet?: (value: T, oldValue: T, obj: any) => void;
-	afterSet?: (value: T, oldValue: T, obj: any) => void;
+export interface PropertyConfig<T, Target extends object = object> {
+	cast?: (value: unknown) => T;
+	beforeSet?: (value: T, oldValue: T, obj: Target) => void;
+	afterSet?: (value: T, oldValue: T, obj: Target) => void;
 }
 
 export function createReactiveProxy<T extends object>(
 	target: T,
-	propertyConfigs: Partial<Record<keyof T, PropertyConfig<any>>>
+	propertyConfigs: { [K in keyof T]?: PropertyConfig<T[K], T> }
 ): T {
 	const handler: ProxyHandler<T> = {
 		get(obj, prop) {

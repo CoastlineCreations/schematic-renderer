@@ -1,0 +1,10 @@
+{
+	"extends": "./tsconfig.json",
+	"include": [
+		"test/pages/scripts/preview.ts",
+		"src/vite-env.d.ts",
+		"src/types/**/*.d.ts",
+		"test/browser/**/*.ts",
+		"playwright.config.ts"
+	]
+}

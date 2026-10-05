@@ -1,7 +1,14 @@
 import * as THREE from "three";
 import { mergeBufferGeometries } from "./mergeBufferGeometries";
 import { AssetLoader } from "./AssetLoader";
-import { Block, BlockModel, BlockModelElement, OptimizedFace } from "./types";
+import {
+	Block,
+	BlockModel,
+	BlockModelElement,
+	BlockModelFace,
+	FaceDirection,
+	OptimizedFace,
+} from "./types";
 
 interface GeometryGroup {
 	geometry: THREE.BufferGeometry;
@@ -10,6 +17,20 @@ interface GeometryGroup {
 	isWater?: boolean;
 	isLava?: boolean;
 }
+
+interface ResolvedElementFace extends BlockModelFace {
+	hasOppositeFace: boolean;
+	lightEmission: number;
+}
+
+const OPPOSITE_FACES: Record<string, FaceDirection> = {
+	down: "up",
+	up: "down",
+	north: "south",
+	south: "north",
+	west: "east",
+	east: "west",
+};
 
 export class BlockMeshBuilder {
 	private assetLoader: AssetLoader;
@@ -313,7 +334,7 @@ export class BlockMeshBuilder {
 			{
 				faces: Array<{
 					direction: string;
-					faceData: any;
+					faceData: ResolvedElementFace;
 					vertices: number[][];
 					uvs: number[];
 					indices: number[];
@@ -328,8 +349,9 @@ export class BlockMeshBuilder {
 		>();
 
 		// Process each face using the SAME logic as the working original
-		for (const [direction, faceData] of Object.entries(element.faces)) {
-			if (!faceData) continue;
+		for (const [direction, sourceFace] of Object.entries(element.faces)) {
+			if (!sourceFace) continue;
+			const faceData = this.resolveElementFace(element, direction, sourceFace);
 
 			// Create a temporary PlaneGeometry to get the correct vertex positions and UVs
 			const tempFaceResult = await this.createTempFaceGeometry(
@@ -426,7 +448,7 @@ export class BlockMeshBuilder {
 	private async createTempFaceGeometry(
 		direction: string,
 		elementSize: number[],
-		faceData: any,
+		faceData: ResolvedElementFace,
 		transform: { x?: number; y?: number; uvlock?: boolean }
 	): Promise<{ vertices: number[][]; uvs: number[]; indices: number[] }> {
 		// Replicate the EXACT same logic as the working createFaceGeometry
@@ -493,7 +515,7 @@ export class BlockMeshBuilder {
 	private createIndexedGeometryFromFaces(
 		faces: Array<{
 			direction: string;
-			faceData: any;
+			faceData: ResolvedElementFace;
 			vertices: number[][];
 			uvs: number[];
 			indices: number[];
@@ -595,7 +617,7 @@ export class BlockMeshBuilder {
 	private async createFaceGeometry(
 		direction: string,
 		elementSize: number[],
-		faceData: any,
+		faceData: ResolvedElementFace,
 		model: BlockModel,
 		transform: { x?: number; y?: number; uvlock?: boolean },
 		blockData?: Block,
@@ -728,21 +750,56 @@ export class BlockMeshBuilder {
 		uvAttr.needsUpdate = true;
 	}
 
+	/** Resolve per-element defaults without modifying shared resource-pack models. */
+	private resolveElementFace(
+		element: BlockModelElement,
+		direction: string,
+		face: BlockModelFace
+	): ResolvedElementFace {
+		return {
+			...face,
+			uv: face.uv ?? this.getImplicitFaceUV(direction, element.from, element.to),
+			hasOppositeFace: !!element.faces?.[OPPOSITE_FACES[direction]],
+			lightEmission: Number.isFinite(element.light_emission)
+				? Math.max(0, Math.min(15, element.light_emission ?? 0))
+				: 0,
+		};
+	}
+
+	private getImplicitFaceUV(
+		direction: string,
+		from: number[] = [0, 0, 0],
+		to: number[] = [16, 16, 16]
+	): [number, number, number, number] {
+		switch (direction) {
+			case "down":
+				return [from[0], 16 - to[2], to[0], 16 - from[2]];
+			case "up":
+				return [from[0], from[2], to[0], to[2]];
+			case "north":
+				return [16 - to[0], 16 - to[1], 16 - from[0], 16 - from[1]];
+			case "south":
+				return [from[0], 16 - to[1], to[0], 16 - from[1]];
+			case "west":
+				return [from[2], 16 - to[1], to[2], 16 - from[1]];
+			case "east":
+				return [16 - to[2], 16 - to[1], 16 - from[2], 16 - from[1]];
+			default:
+				return [0, 0, 16, 16];
+		}
+	}
+
 	/**
 	 * Enhanced UV coordinate mapping that preserves face-specific logic
 	 */
 	private mapUVCoordinates(
 		geometry: THREE.PlaneGeometry,
 		direction: string,
-		faceData: any,
+		faceData: ResolvedElementFace,
 		transform: { x?: number; y?: number; uvlock?: boolean }
 	): void {
-		if (!faceData.uv) {
-			faceData.uv = [0, 0, 16, 16];
-		}
-
 		const uvAttribute = geometry.attributes.uv as THREE.BufferAttribute;
-		const [uMinPx, vMinPx, uMaxPx, vMaxPx] = faceData.uv;
+		const [uMinPx, vMinPx, uMaxPx, vMaxPx] = faceData.uv ?? [0, 0, 16, 16];
 
 		// Convert from pixel coordinates to normalized coordinates
 		const u1 = uMinPx / 16;
@@ -835,7 +892,11 @@ export class BlockMeshBuilder {
 			);
 
 			for (const face of elementFaces) {
-				if (face.material.transparent || face.material.opacity < 1.0) {
+				if (
+					face.material.transparent ||
+					face.material.alphaTest > 0 ||
+					face.material.opacity < 1.0
+				) {
 					hasTransparency = true;
 				}
 
@@ -887,8 +948,9 @@ export class BlockMeshBuilder {
 		const faceDirections = ["down", "up", "north", "south", "west", "east"] as const;
 
 		for (const direction of faceDirections) {
-			const faceData = element.faces[direction];
-			if (!faceData) continue;
+			const sourceFace = element.faces[direction];
+			if (!sourceFace) continue;
+			const faceData = this.resolveElementFace(element, direction, sourceFace);
 
 			// Create the face geometry (reuse existing logic)
 			const { geometry, material } = await this.createFaceGeometry(
@@ -913,6 +975,7 @@ export class BlockMeshBuilder {
 				direction,
 				cullface: faceData.cullface,
 				elementBounds: [fromJSON, toJSON],
+				hasElementRotation: element.rotation !== undefined && element.rotation.angle !== 0,
 				canBatch,
 			});
 		}
@@ -923,7 +986,11 @@ export class BlockMeshBuilder {
 	/**
 	 * Determine if a face can be batched efficiently
 	 */
-	private canFaceBeBatched(element: BlockModelElement, faceData: any, direction: string): boolean {
+	private canFaceBeBatched(
+		element: BlockModelElement,
+		faceData: ResolvedElementFace,
+		direction: string
+	): boolean {
 		// Faces with rotations are harder to batch
 		if (element.rotation && element.rotation.angle !== 0) {
 			return false;
@@ -1031,7 +1098,7 @@ export class BlockMeshBuilder {
 	private getMaterialKey(
 		texturePath: string,
 		direction: string,
-		faceData: any,
+		faceData: ResolvedElementFace,
 		blockData?: Block,
 		biome?: string
 	): string {
@@ -1042,13 +1109,13 @@ export class BlockMeshBuilder {
 			? JSON.stringify(blockData.properties) // Consider sorted stringify for consistency
 			: "none";
 
-		return `${texturePath}_dir:${direction}_tint:${tintIndex}_cull:${cullFace}_block:${blockId}_props:${props}_biome:${biome}`;
+		return `${texturePath}_dir:${direction}_tint:${tintIndex}_cull:${cullFace}_block:${blockId}_props:${props}_biome:${biome}_light:${faceData.lightEmission}_opposite:${faceData.hasOppositeFace}`;
 	}
 
 	private async createFaceMaterial(
 		texturePath: string,
 		direction: string,
-		faceData: any,
+		faceData: ResolvedElementFace,
 		_model: BlockModel,
 		blockData?: Block,
 		biome?: string,
@@ -1062,7 +1129,9 @@ export class BlockMeshBuilder {
 
 			// Handle tinting for blocks with tintindex
 			if (blockData && faceData.tintindex !== undefined) {
-				const blockIdForTint = `${blockData.namespace}:${blockData.name}`;
+				const blockIdForTint = /^(?:minecraft:)?block\/water_(?:still|flow)$/.test(texturePath)
+					? "minecraft:water"
+					: `${blockData.namespace}:${blockData.name}`;
 				tint = this.assetLoader.getTint(blockIdForTint, blockData.properties, biome);
 			}
 
@@ -1080,7 +1149,7 @@ export class BlockMeshBuilder {
 			const isFlowing = (isWater || isLava) && liquidLevel !== undefined && liquidLevel !== "0";
 
 			// Material options for AssetLoader
-			const materialOptions: any = {
+			const materialOptions = {
 				tint: tint,
 				isLiquid: isLiquid,
 				isWater: isWater,
@@ -1115,6 +1184,7 @@ export class BlockMeshBuilder {
 
 			// Set sidedness based on element type
 			if (
+				!faceData.hasOppositeFace &&
 				!isRedstoneTorchElement &&
 				(isThinElementHeuristic ||
 					knownThinTexture ||
@@ -1128,8 +1198,19 @@ export class BlockMeshBuilder {
 			// Copy transparency and rendering properties from base material
 			clonedMaterial.transparent = material.transparent;
 			clonedMaterial.alphaTest = material.alphaTest;
-			clonedMaterial.depthWrite = material.depthWrite;
+			clonedMaterial.depthWrite = faceData.lightEmission > 0 ? false : material.depthWrite;
 			clonedMaterial.opacity = material.opacity;
+
+			if (faceData.lightEmission > 0 && clonedMaterial instanceof THREE.MeshStandardMaterial) {
+				clonedMaterial.emissiveMap = clonedMaterial.map;
+				clonedMaterial.emissive.set(0xffffff);
+				clonedMaterial.emissiveIntensity = faceData.lightEmission / 15;
+				if (faceData.lightEmission === 15) clonedMaterial.color.set(0);
+				// Emissive elements may be coplanar overlays of a normally lit face.
+				clonedMaterial.polygonOffset = true;
+				clonedMaterial.polygonOffsetFactor = -1;
+				clonedMaterial.polygonOffsetUnits = -1;
+			}
 
 			// Copy over userData including atlas information
 			clonedMaterial.userData = { ...material.userData };

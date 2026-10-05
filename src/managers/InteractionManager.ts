@@ -18,7 +18,6 @@ export class InteractionManager {
 	private raycaster: THREE.Raycaster;
 	private mouse: THREE.Vector2;
 	private camera: THREE.Camera;
-	private hoveredObject: SelectableObject | null = null;
 	private canvas: HTMLCanvasElement;
 	private selectedObject: SelectableObject | null = null;
 
@@ -61,8 +60,6 @@ export class InteractionManager {
 		if (!this.options.enableSelection) return;
 
 		this.updateMousePosition(event);
-		// Uncomment if hover functionality is needed
-		// this.checkHover();
 	}
 
 	private onMouseDown(event: MouseEvent) {
@@ -97,53 +94,6 @@ export class InteractionManager {
 		this.mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 	}
 
-	// @ts-ignore
-	private checkHover() {
-		this.raycaster.setFromCamera(this.mouse, this.camera);
-
-		const selectableObjects = this.schematicRenderer.schematicManager?.getSelectableObjects();
-
-		if (!selectableObjects || selectableObjects.length === 0) {
-			console.warn("No selectable objects found");
-			return;
-		}
-
-		// Filter out any undefined objects
-		const validObjects = selectableObjects.filter((obj) => obj !== undefined);
-
-		if (validObjects.length !== selectableObjects.length) {
-			console.warn(
-				`Filtered out ${selectableObjects.length - validObjects.length} undefined objects`
-			);
-		}
-
-		try {
-			const intersects = this.raycaster.intersectObjects(validObjects, true);
-
-			if (intersects.length > 0) {
-				const intersectedObject = intersects[0].object;
-				const selectableObject = this.findSelectableParent(intersectedObject);
-
-				if (selectableObject && selectableObject !== this.hoveredObject) {
-					if (this.hoveredObject) {
-						this.schematicRenderer.eventEmitter.emit("hoverExit", this.hoveredObject);
-					}
-					this.hoveredObject = selectableObject;
-					this.schematicRenderer.eventEmitter.emit("hoverEnter", selectableObject, intersects[0]);
-					console.log("Hovering over object", selectableObject.id);
-				}
-			} else if (this.hoveredObject) {
-				this.schematicRenderer.eventEmitter.emit("hoverExit", this.hoveredObject);
-				this.hoveredObject = null;
-			}
-		} catch (error) {
-			// console.error("Error in checkHover:", error);
-			// console.log("Camera:", this.camera);
-			// console.log("Mouse:", this.mouse);
-			// console.log("Valid objects:", validObjects);
-		}
-	}
-
 	private findSelectableParent(object: THREE.Object3D): SelectableObject | null {
 		let current: THREE.Object3D | null = object;
 		while (current) {
@@ -158,28 +108,6 @@ export class InteractionManager {
 		}
 		console.log("No selectable parent found");
 		return null;
-	}
-
-	// @ts-ignore
-	private visualizeBoundingBoxes() {
-		const selectableObjects = this.schematicRenderer.schematicManager?.getSelectableObjects();
-		if (!selectableObjects) {
-			console.warn("No selectable objects found");
-			return;
-		}
-		selectableObjects.forEach((object) => {
-			const box = new THREE.Box3().setFromObject(object);
-			const helper = new THREE.Box3Helper(box, new THREE.Color(0xffff00));
-			this.schematicRenderer.sceneManager.scene.add(helper);
-
-			console.log("Object:", object.name);
-			console.log("  Position:", object.position);
-			console.log("  Scale:", object.scale);
-			console.log("  Bounding box min:", box.min);
-			console.log("  Bounding box max:", box.max);
-			console.log("  Bounding box size:", box.getSize(new THREE.Vector3()));
-		});
-		console.log("Added bounding box visualizations");
 	}
 
 	private checkSelection() {
@@ -212,8 +140,12 @@ export class InteractionManager {
 			if (
 				selectableObject &&
 				(selectableObject.id?.startsWith("region_") ||
-					(selectableObject as any).name?.startsWith("region_") ||
-					(selectableObject as any).group?.name?.startsWith("region_"))
+					("name" in selectableObject &&
+						typeof selectableObject.name === "string" &&
+						selectableObject.name.startsWith("region_")) ||
+					("group" in selectableObject &&
+						selectableObject.group instanceof THREE.Object3D &&
+						selectableObject.group.name.startsWith("region_")))
 			) {
 				return;
 			}
@@ -229,7 +161,7 @@ export class InteractionManager {
 				// while keeping the region active.
 				if (
 					this.selectedObject &&
-					(this.selectedObject as any).id?.startsWith("region_") &&
+					this.selectedObject.id.startsWith("region_") &&
 					selectableObject instanceof SchematicObject
 				) {
 					console.log(

@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import type { PaletteCache, PaletteBlockData } from "./types";
 import { INVISIBLE_BLOCKS } from "./WorldMeshBuilder";
 // Fixed instanced rendering with proper geometry merging and block variants
 
@@ -10,11 +11,11 @@ export class InstancedBlockRenderer {
 
 	constructor(
 		private group: THREE.Group,
-		private paletteCache: any
+		private paletteCache: PaletteCache
 	) {}
 
-	private createBlockTypeKey(blockData: any, paletteIndex: number): string {
-		const blockState = this.paletteCache?.blockData?.[paletteIndex];
+	private createBlockTypeKey(blockData: PaletteBlockData, paletteIndex: number): string {
+		const blockState = this.paletteCache.palette[paletteIndex];
 		if (!blockState) return `unknown_${paletteIndex}`;
 
 		const properties = blockState.properties || {};
@@ -126,7 +127,7 @@ export class InstancedBlockRenderer {
 
 		const uniqueBlockTypes = new Set<string>();
 
-		this.paletteCache.blockData.forEach((blockData: any, paletteIndex: number) => {
+		this.paletteCache.blockData.forEach((blockData: PaletteBlockData, paletteIndex: number) => {
 			const blockName = blockData.blockName;
 
 			if (INVISIBLE_BLOCKS.has(blockName)) {
@@ -142,7 +143,7 @@ export class InstancedBlockRenderer {
 
 			const instancedMeshesForBlock: THREE.InstancedMesh[] = [];
 
-			blockData.materialGroups.forEach((materialGroup: any, groupIndex: number) => {
+			blockData.materialGroups.forEach((materialGroup, groupIndex) => {
 				const geometry = materialGroup.baseGeometry;
 				const material = materialGroup.material;
 
@@ -180,7 +181,7 @@ export class InstancedBlockRenderer {
 
 		const uniqueBlockTypes = new Set<string>();
 
-		this.paletteCache.blockData.forEach((blockData: any, paletteIndex: number) => {
+		this.paletteCache.blockData.forEach((blockData: PaletteBlockData, paletteIndex: number) => {
 			const blockName = blockData.blockName;
 
 			if (INVISIBLE_BLOCKS.has(blockName)) {
@@ -195,7 +196,7 @@ export class InstancedBlockRenderer {
 			uniqueBlockTypes.add(blockTypeKey);
 
 			const geometriesToMerge = blockData.materialGroups
-				.map((group: any) => group.baseGeometry)
+				.map((group) => group.baseGeometry)
 				.filter(
 					(geo: THREE.BufferGeometry) =>
 						geo && geo.attributes.position && geo.attributes.position.count > 0
@@ -214,7 +215,7 @@ export class InstancedBlockRenderer {
 			}
 
 			const materials = blockData.materialGroups
-				.map((group: any) => group.material)
+				.map((group) => group.material)
 				.filter((mat: THREE.Material) => mat);
 
 			const material = materials[0];
@@ -269,10 +270,9 @@ export class InstancedBlockRenderer {
 
 			const blockTypeKey = this.createBlockTypeKey(blockData, block.paletteIndex);
 
-			if (!blocksByType.has(blockTypeKey)) {
-				blocksByType.set(blockTypeKey, []);
-			}
-			blocksByType.get(blockTypeKey)!.push({ x: block.x, y: block.y, z: block.z });
+			const positions = blocksByType.get(blockTypeKey) ?? [];
+			positions.push({ x: block.x, y: block.y, z: block.z });
+			blocksByType.set(blockTypeKey, positions);
 		}
 
 		blocksByType.forEach((positions, blockTypeKey) => {
@@ -400,7 +400,7 @@ export class InstancedBlockRenderer {
 			case "water":
 				mesh.renderOrder = 3;
 				material.transparent = true;
-				if ("opacity" in material) (material as any).opacity = 0.8;
+				material.opacity = 0.8;
 				break;
 			case "transparent":
 				mesh.renderOrder = 2;

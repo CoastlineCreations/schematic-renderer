@@ -178,12 +178,13 @@ export class InsignIoManager extends EventEmitter {
 			regions = regions.filter((r) => pattern.test(r.dataType));
 		}
 
-		if (filter.minBits !== undefined) {
-			regions = regions.filter((r) => r.positions.length >= filter.minBits!);
+		const { minBits, maxBits } = filter;
+		if (minBits !== undefined) {
+			regions = regions.filter((r) => r.positions.length >= minBits);
 		}
 
-		if (filter.maxBits !== undefined) {
-			regions = regions.filter((r) => r.positions.length <= filter.maxBits!);
+		if (maxBits !== undefined) {
+			regions = regions.filter((r) => r.positions.length <= maxBits);
 		}
 
 		return regions;
@@ -200,9 +201,10 @@ export class InsignIoManager extends EventEmitter {
 		}
 
 		// If already active, just update style
-		if (this.activeHighlights.has(regionId)) {
+		const activeHighlight = this.activeHighlights.get(regionId);
+		if (activeHighlight) {
 			if (style) {
-				this.activeHighlights.get(regionId)!.updateStyle(style);
+				activeHighlight.updateStyle(style);
 			}
 			return;
 		}

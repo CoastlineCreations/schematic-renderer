@@ -37,8 +37,26 @@ export interface BlockStateModelHolder {
 }
 
 export interface BlockStateMultipart {
-	when?: BlockStateDefinitionVariant<string> | { OR: BlockStateDefinitionVariant<string>[] };
+	when?: BlockStateCondition;
 	apply: BlockStateModelHolder | BlockStateModelHolder[];
+}
+
+export type BlockStateCondition =
+	| BlockStateDefinitionVariant<string | number | boolean>
+	| { AND: BlockStateCondition[] }
+	| { OR: BlockStateCondition[] };
+
+export type FaceDirection = "down" | "up" | "north" | "south" | "west" | "east";
+
+/** Modern packs wrap sprite paths; older packs use plain strings. */
+export type BlockTextureReference = string | { sprite: string; atlas?: string };
+
+export interface BlockModelFace {
+	texture: BlockTextureReference;
+	cullface?: string;
+	rotation?: number;
+	tintindex?: number;
+	uv?: [number, number, number, number];
 }
 
 export interface BlockStateDefinitionVariant<T> {
@@ -47,7 +65,7 @@ export interface BlockStateDefinitionVariant<T> {
 
 export interface BlockModel {
 	parent?: string;
-	textures?: Record<string, string>;
+	textures?: Record<string, BlockTextureReference>;
 	elements?: BlockModelElement[];
 	display?: Record<string, any>;
 }
@@ -55,21 +73,14 @@ export interface BlockModel {
 export interface BlockModelElement {
 	from: [number, number, number];
 	to: [number, number, number];
+	light_emission?: number;
 	rotation?: {
 		origin: [number, number, number];
 		axis: "x" | "y" | "z";
 		angle: number;
 		rescale?: boolean;
 	};
-	faces?: {
-		[face in "down" | "up" | "north" | "south" | "west" | "east"]?: {
-			texture: string;
-			cullface?: string;
-			rotation?: number;
-			tintindex?: number;
-			uv?: [number, number, number, number];
-		};
-	};
+	faces?: Partial<Record<FaceDirection, BlockModelFace>>;
 }
 
 export interface ResourcePackLoadOptions {
@@ -96,6 +107,8 @@ export interface BlockOptimizationData {
 	// Face organization
 	cullableFaces: Map<string, OptimizedFace[]>; // direction -> faces
 	nonCullableFaces: OptimizedFace[];
+	/** Blockstate rotation, needed when projecting model-space occlusion into the world. */
+	modelRotation?: { x?: number; y?: number };
 
 	// For batching
 	geometryTemplate?: GeometryTemplate;
@@ -107,6 +120,8 @@ export interface OptimizedFace {
 	direction: string; // face normal direction
 	cullface?: string; // the cullface value from model
 	elementBounds: [number[], number[]]; // from/to in block space
+	/** Bounds above are unrotated; they cannot prove neighbour occlusion after element rotation. */
+	hasElementRotation?: boolean;
 	canBatch: boolean;
 }
 

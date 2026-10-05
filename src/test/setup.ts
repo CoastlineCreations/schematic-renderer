@@ -108,7 +108,7 @@ class MockWorker {
 global.Worker = MockWorker as unknown as typeof Worker;
 
 // Mock WASM modules
-vi.mock("nucleation", () => ({
+vi.mock("../nucleationExports", () => ({
 	default: vi.fn().mockResolvedValue(undefined),
 	SchematicWrapper: class MockSchematicWrapper {
 		from_data = vi.fn();

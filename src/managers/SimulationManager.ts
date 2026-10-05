@@ -1,8 +1,9 @@
 // SimulationManager.ts
 import { EventEmitter } from "events";
 import { SimulationLogger } from "../utils/SimulationLogger";
-// @ts-ignore
-import type { SchematicWrapper, MchprsWorldWrapper, SimulationOptionsWrapper } from "nucleation";
+import type { MchprsWorld } from "nucleation";
+import { SchematicWrapper } from "../nucleation/SchematicWrapper";
+import { getNucleation, initializeNucleationWasm } from "../nucleation/runtime";
 
 /**
  * Simulation synchronization modes
@@ -70,7 +71,8 @@ export interface BlockStateChange {
 
 export class SimulationManager {
 	private eventEmitter: EventEmitter;
-	private simulationWorld: MchprsWorldWrapper | null = null;
+	private simulationWorld: MchprsWorld | null = null;
+	private initializationVersion = 0;
 	private schematic: SchematicWrapper | null = null;
 	private state: SimulationState = {
 		isRunning: false,
@@ -117,17 +119,13 @@ export class SimulationManager {
 		schematic: SchematicWrapper,
 		config?: SimulationConfig
 	): Promise<boolean> {
+		const version = ++this.initializationVersion;
 		try {
 			const { syncMode = "synced", optimize = false, customIo = [], tickSpeed = 20 } = config || {};
 
 			SimulationLogger.info(
 				`Initializing simulation [mode=${syncMode}, optimize=${optimize}, customIo=${customIo.length}]`
 			);
-
-			// Store config
-			this.state.syncMode = syncMode;
-			this.state.tickSpeed = tickSpeed;
-			this.state.customIoPositions = customIo;
 
 			// Check schematic dimensions
 			const dimensions = schematic.get_dimensions();
@@ -138,26 +136,23 @@ export class SimulationManager {
 			// Create simulation world with options
 			SimulationLogger.info("Creating MCHPRS simulation world...");
 
-			// Import nucleation wasm module
-			const { SimulationOptionsWrapper } = await import("nucleation");
-			const simOptions = new SimulationOptionsWrapper();
-
-			// Set optimization flag
-			simOptions.optimize = optimize;
-
-			// Set IO-only mode (only affects flush, not compilation)
-			simOptions.io_only = syncMode === "io-only";
-
-			// Add custom IO positions
-			if (customIo.length > 0) {
-				SimulationLogger.info(`Registering ${customIo.length} custom IO positions...`);
-				for (const pos of customIo) {
-					simOptions.addCustomIo(pos.x, pos.y, pos.z);
-				}
-			}
-
-			// Create simulation world
-			this.simulationWorld = schematic.create_simulation_world_with_options(simOptions);
+			await initializeNucleationWasm();
+			if (version !== this.initializationVersion) return false;
+			const { MchprsWorld } = getNucleation();
+			const world = MchprsWorld.createWithCustomIo(
+				schematic.native,
+				optimize,
+				syncMode === "io-only",
+				customIo.flatMap(({ x, y, z }) => [x, y, z])
+			);
+			// Establish the baseline before the first injected signal changes.
+			world.checkCustomIoChanges();
+			world.clearCustomIoChanges();
+			this.stopAutoTick();
+			this.simulationWorld = world;
+			this.state.syncMode = syncMode;
+			this.state.tickSpeed = tickSpeed;
+			this.state.customIoPositions = customIo.map((position) => ({ ...position }));
 			this.schematic = schematic;
 			this.state.isRunning = true;
 			this.state.tickCount = 0;
@@ -233,13 +228,12 @@ export class SimulationManager {
 				shouldSync = false;
 			} else {
 				// Auto mode - use configured syncMode
-				shouldSync = this.state.syncMode === "synced";
-				// io-only mode syncs automatically via flush() with io_only flag
+				shouldSync = this.state.syncMode !== "headless";
 			}
 
 			// Sync to schematic for visual updates
 			if (shouldSync) {
-				this.simulationWorld.sync_to_schematic();
+				this.publishSchematicState();
 			}
 
 			this.eventEmitter.emit("simulationTicked", {
@@ -277,36 +271,35 @@ export class SimulationManager {
 			// Flush Redpiler state to world blocks
 			this.simulationWorld.flush();
 
-			// Sync to schematic
-			this.simulationWorld.sync_to_schematic();
-
-			// Get updated schematic
-			const updatedSchematic = this.simulationWorld.get_schematic();
-
-			// Debug custom IO blocks if present
-			if (this.state.customIoPositions.length > 0) {
-				console.log("[SimulationManager] DEBUG: Checking custom IO blocks after sync:");
-				this.state.customIoPositions.forEach((pos) => {
-					const blockString = updatedSchematic.get_block_string(pos.x, pos.y, pos.z);
-					const signalStrength = this.simulationWorld!.getSignalStrength(pos.x, pos.y, pos.z);
-					console.log(
-						`  [${pos.x},${pos.y},${pos.z}] signal=${signalStrength}, block="${blockString}"`
-					);
-				});
-			}
-
+			const updatedSchematic = this.publishSchematicState();
 			SimulationLogger.sync();
-
-			this.eventEmitter.emit("simulationSynced", {
-				tickCount: this.state.tickCount,
-				updatedSchematic,
-			});
-
 			return updatedSchematic;
 		} catch (error) {
 			SimulationLogger.error("Failed to sync simulation:", error);
 			return null;
 		}
+	}
+
+	private publishSchematicState(): SchematicWrapper | null {
+		if (!this.simulationWorld || !this.schematic) return null;
+		this.simulationWorld.syncToSchematic();
+		const sourceSchematic = this.schematic;
+		const updatedSchematic = SchematicWrapper.fromNative(
+			this.simulationWorld.getSchematic(),
+			"owned"
+		);
+		this.schematic = updatedSchematic;
+		this.eventEmitter.emit("simulationSynced", {
+			tickCount: this.state.tickCount,
+			sourceSchematic,
+			updatedSchematic,
+		});
+		return updatedSchematic;
+	}
+
+	/** Whether this wrapper is the schematic currently represented by the simulation. */
+	ownsSchematic(schematic: SchematicWrapper): boolean {
+		return this.isSimulationActive() && this.schematic === schematic;
 	}
 
 	/**
@@ -455,10 +448,9 @@ export class SimulationManager {
 	 */
 	onCustomIoChange(x: number, y: number, z: number, callback: CustomIoCallback): () => void {
 		const key = `${x},${y},${z}`;
-		if (!this.customIoCallbacks.has(key)) {
-			this.customIoCallbacks.set(key, []);
-		}
-		this.customIoCallbacks.get(key)!.push(callback);
+		const callbacks = this.customIoCallbacks.get(key) ?? [];
+		callbacks.push(callback);
+		this.customIoCallbacks.set(key, callbacks);
 
 		// Return unsubscribe function
 		return () => {
@@ -488,7 +480,12 @@ export class SimulationManager {
 			this.simulationWorld.checkCustomIoChanges();
 
 			// Poll the detected changes
-			const changes = this.simulationWorld.pollCustomIoChanges();
+			const changes = JSON.parse(this.simulationWorld.pollCustomIoChangesJson()) as Array<{
+				x: number;
+				y: number;
+				z: number;
+				new_power: number;
+			}>;
 
 			// Trigger JS callbacks for each change
 			for (const change of changes) {
@@ -500,7 +497,7 @@ export class SimulationManager {
 						x: change.x,
 						y: change.y,
 						z: change.z,
-						power: change.newPower,
+						power: change.new_power,
 						tick: this.state.tickCount,
 					};
 					callbacks.forEach((cb) => cb(state));
@@ -527,28 +524,15 @@ export class SimulationManager {
 		try {
 			SimulationLogger.info(`Interacting with block at (${x}, ${y}, ${z})`);
 
-			// Interact with block
-			this.simulationWorld.on_use_block(x, y, z);
-
-			// Tick to process the interaction
-			this.simulationWorld.tick(20);
-
-			// Flush changes
-			this.simulationWorld.flush();
-
-			// Sync to schematic if in synced mode
-			if (this.state.syncMode === "synced") {
-				this.simulationWorld.sync_to_schematic();
-			}
-
-			// Get updated schematic
-			const updatedSchematic = this.simulationWorld.get_schematic();
+			this.simulationWorld.onUseBlock(x, y, z);
+			this.tick(20, "none");
+			const updatedSchematic =
+				this.state.syncMode === "headless" ? this.getSchematic() : this.publishSchematicState();
 
 			this.eventEmitter.emit("blockInteracted", {
 				position: [x, y, z],
-				tickCount: this.state.tickCount + 2,
+				tickCount: this.state.tickCount,
 			});
-
 			return updatedSchematic;
 		} catch (error) {
 			SimulationLogger.error("Failed to interact with block:", error);
@@ -647,13 +631,7 @@ export class SimulationManager {
 	destroy(): void {
 		this.stopAutoTick();
 
-		if (this.simulationWorld) {
-			try {
-				this.simulationWorld.free();
-			} catch (error) {
-				console.error("Error freeing simulation world:", error);
-			}
-		}
+		++this.initializationVersion;
 
 		this.simulationWorld = null;
 		this.schematic = null;
@@ -674,7 +652,7 @@ export class SimulationManager {
 		}
 
 		try {
-			return this.simulationWorld.get_schematic();
+			return SchematicWrapper.fromNative(this.simulationWorld.getSchematic(), "owned");
 		} catch (error) {
 			console.error("Failed to get schematic:", error);
 			return null;

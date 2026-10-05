@@ -1,27 +1,36 @@
 // managers/CameraWrapper.ts
 import * as THREE from "three";
 import { EventEmitter } from "events";
-// @ts-ignore
-import { OrbitControls } from "three/examples/jsm/controls/OrbitControls";
-// @ts-ignore
-import { CreativeControls } from "three-creative-controls";
+import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { CreativeControls } from "./CreativeControls";
+import { FlyControls } from "./FlyControls";
 
 import { SchematicRenderer } from "../SchematicRenderer";
 
+export interface CameraParameters {
+	fov?: number;
+	aspect?: number;
+	near?: number;
+	far?: number;
+	size?: number;
+	position?: THREE.Vector3 | THREE.Vector3Tuple;
+	rotation?: THREE.Euler | THREE.Vector3Tuple;
+	lookAt?: THREE.Vector3 | THREE.Vector3Tuple;
+}
+
+export type CameraControl = OrbitControls | FlyControls;
+
 export class CameraWrapper extends EventEmitter {
 	private _camera: THREE.Camera;
-	// @ts-ignore
-	private _type: "perspective" | "orthographic";
 	private rendererDomElement: HTMLCanvasElement;
 
 	constructor(
 		type: "perspective" | "orthographic",
 		rendererDomElement: HTMLCanvasElement,
 		private schematicRenderer: SchematicRenderer,
-		params: any = {}
+		params: CameraParameters = {}
 	) {
 		super();
-		this._type = type;
 		this.rendererDomElement = rendererDomElement;
 
 		if (type === "perspective") {
@@ -141,8 +150,8 @@ export class CameraWrapper extends EventEmitter {
 		this.emit("propertyChanged", { property: "aspect", value: aspect });
 	}
 
-	createControls(type: "orbit" | "creative" | any) {
-		let controls: any;
+	createControls(type: "orbit" | "creative" | "fly" | "none"): CameraControl | undefined {
+		let controls: CameraControl | undefined;
 		if (type === "orbit") {
 			controls = new OrbitControls(this._camera, this.rendererDomElement);
 		} else if (type === "creative") {
@@ -150,13 +159,14 @@ export class CameraWrapper extends EventEmitter {
 			const uiManager = this.schematicRenderer.uiManager;
 			if (!uiManager) {
 				console.warn("UIManager not initialized, creative controls might not work as expected");
-				controls = CreativeControls.Controls(this._camera, this.rendererDomElement, null, null);
-				return controls;
+				return undefined;
 			}
 
 			const { menu, blocker } = uiManager.createFPVElements();
 
-			controls = CreativeControls.Controls(this._camera, this.rendererDomElement, menu, blocker);
+			controls = new CreativeControls(this._camera, this.rendererDomElement, menu, blocker);
+		} else if (type === "fly") {
+			controls = new FlyControls(this._camera, this.rendererDomElement);
 		}
 		return controls;
 	}
@@ -207,7 +217,6 @@ export class CameraWrapper extends EventEmitter {
 	}
 
 	changeType(type: "perspective" | "orthographic") {
-		this._type = type;
 		if (type === "perspective") {
 			const currentCamera = this._camera as THREE.OrthographicCamera;
 			const aspect = window.innerWidth / window.innerHeight;

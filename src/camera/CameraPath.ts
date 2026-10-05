@@ -61,5 +61,5 @@ export abstract class CameraPath {
 	}
 
 	// Abstract method to update parameters
-	public abstract updateParameters(params: any): void;
+	public abstract updateParameters(params: object): void;
 }

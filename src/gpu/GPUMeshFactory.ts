@@ -149,7 +149,7 @@ export class GPUMeshFactory {
 				case "water":
 					mesh.renderOrder = 3;
 					mat.transparent = true;
-					if ("opacity" in mat) (mat as any).opacity = 0.8;
+					mat.opacity = 0.8;
 					break;
 				case "transparent":
 					mesh.renderOrder = 2;

@@ -1,4 +1,13 @@
-import * as THREE from "three";
+import type { PerformanceWithMemory } from "../types/browser";
+
+/** Common statistics exposed by WebGLRenderer and WebGPURenderer. */
+export interface RendererMetricsSource {
+	info: {
+		render: { calls: number; drawCalls?: number; triangles: number; points: number; lines: number };
+		memory: { geometries: number; textures: number; programs?: number };
+		programs?: readonly unknown[] | null;
+	};
+}
 
 export interface MemorySnapshot {
 	timestamp: number;
@@ -12,7 +21,7 @@ export interface MemorySnapshot {
 	vertexCount: number;
 	indexCount: number;
 	bufferMemoryEstimate: number;
-	customData?: Record<string, any>;
+	customData?: Record<string, unknown>;
 }
 
 export interface TimingData {
@@ -21,7 +30,7 @@ export interface TimingData {
 	endTime?: number;
 	duration?: number;
 	parentOperation?: string;
-	metadata?: Record<string, any>;
+	metadata?: Record<string, unknown>;
 }
 
 export interface BlockProcessingData {
@@ -40,7 +49,7 @@ export interface ChunkRenderingPhase {
 	duration?: number;
 	memoryBefore: number;
 	memoryAfter?: number;
-	metadata?: Record<string, any>;
+	metadata?: Record<string, unknown>;
 }
 
 export interface ChunkProcessingData {
@@ -156,7 +165,7 @@ export class PerformanceMonitor {
 	private static instance: PerformanceMonitor;
 	private sessions: Map<string, MeshBuildingSession> = new Map();
 	private currentSession: MeshBuildingSession | null = null;
-	private renderer: THREE.WebGLRenderer | null = null;
+	private renderer: RendererMetricsSource | null = null;
 
 	// Memory tracking
 	private memoryCheckInterval: number = 100; // ms
@@ -186,7 +195,7 @@ export class PerformanceMonitor {
 		return PerformanceMonitor.instance;
 	}
 
-	public setRenderer(renderer: THREE.WebGLRenderer): void {
+	public setRenderer(renderer: RendererMetricsSource | null): void {
 		this.renderer = renderer;
 	}
 
@@ -217,11 +226,11 @@ export class PerformanceMonitor {
 			frameHistory: [],
 		};
 
-		this.sessions.set(sessionId, this.currentSession!);
+		this.sessions.set(sessionId, this.currentSession);
 
 		// Take baseline memory snapshot
 		this.baselineMemory = this.takeMemorySnapshot("session_start");
-		this.currentSession!.memorySnapshots.push(this.baselineMemory);
+		this.currentSession.memorySnapshots.push(this.baselineMemory);
 
 		// Start continuous memory monitoring
 		this.startMemoryMonitoring();
@@ -254,13 +263,13 @@ export class PerformanceMonitor {
 		// Capture final renderer stats summary
 		if (this.renderer && this.renderer.info) {
 			session.rendererStats = {
-				drawCalls: this.renderer.info.render.calls,
+				drawCalls: this.renderer.info.render.drawCalls ?? this.renderer.info.render.calls,
 				triangles: this.renderer.info.render.triangles,
 				points: this.renderer.info.render.points,
 				lines: this.renderer.info.render.lines,
 				geometries: this.renderer.info.memory.geometries,
 				textures: this.renderer.info.memory.textures,
-				programs: this.renderer.info.programs?.length || 0,
+				programs: this.renderer.info.programs?.length ?? this.renderer.info.memory.programs ?? 0,
 			};
 		}
 
@@ -321,7 +330,7 @@ export class PerformanceMonitor {
 		});
 	}
 
-	public startOperation(name: string, metadata?: Record<string, any>): void {
+	public startOperation(name: string, metadata?: Record<string, unknown>): void {
 		const operation: TimingData = {
 			name,
 			startTime: performance.now(),
@@ -365,7 +374,7 @@ export class PerformanceMonitor {
 		}
 	}
 
-	public recordOperationDetails(operationName: string, details: Record<string, any>) {
+	public recordOperationDetails(operationName: string, details: Record<string, unknown>) {
 		if (!this.currentSession) return;
 
 		// If detailed operation data is needed, store it
@@ -410,10 +419,11 @@ export class PerformanceMonitor {
 		};
 
 		// Get browser memory info if available
-		if ((performance as any).memory) {
-			snapshot.jsHeapSize = (performance as any).memory.jsHeapSize;
-			snapshot.jsHeapSizeLimit = (performance as any).memory.jsHeapSizeLimit;
-			snapshot.usedJSHeapSize = (performance as any).memory.usedJSHeapSize;
+		const memory = (performance as PerformanceWithMemory).memory;
+		if (memory) {
+			snapshot.jsHeapSize = memory.totalJSHeapSize;
+			snapshot.jsHeapSizeLimit = memory.jsHeapSizeLimit;
+			snapshot.usedJSHeapSize = memory.usedJSHeapSize;
 		}
 
 		// Get Three.js renderer memory info
@@ -524,7 +534,8 @@ export class PerformanceMonitor {
 
 			if (memoryIncrease > 5 * 1024 * 1024) {
 				// 5MB increase
-				hotspots.push(current.customData?.label || `snapshot_${i}`);
+				const label = current.customData?.label;
+				hotspots.push(typeof label === "string" ? label : `snapshot_${i}`);
 			}
 		}
 
@@ -681,13 +692,14 @@ export class PerformanceMonitor {
 				if (this.frameCount % 10 === 0) {
 					this.currentSession.rendererStatsHistory.push({
 						timestamp: now,
-						drawCalls: this.renderer.info.render.calls,
+						drawCalls: this.renderer.info.render.drawCalls ?? this.renderer.info.render.calls,
 						triangles: this.renderer.info.render.triangles,
 						points: this.renderer.info.render.points,
 						lines: this.renderer.info.render.lines,
 						geometries: this.renderer.info.memory.geometries,
 						textures: this.renderer.info.memory.textures,
-						programs: this.renderer.info.programs?.length || 0,
+						programs:
+							this.renderer.info.programs?.length ?? this.renderer.info.memory.programs ?? 0,
 					});
 				}
 			}

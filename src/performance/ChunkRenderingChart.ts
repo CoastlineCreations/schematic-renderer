@@ -191,7 +191,8 @@ export class ChunkRenderingChart {
 
 			let currentY = yScale(0);
 			const barWidth = xScale.bandwidth();
-			const barX = xScale(`[${chunk.chunkCoords.join(",")}]`)!;
+			const barX = xScale(`[${chunk.chunkCoords.join(",")}]`);
+			if (barX === undefined) return;
 
 			// Calculate phase proportions based on timing
 

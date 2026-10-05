@@ -104,8 +104,8 @@ export class RegionInteractionHandler {
 
 			// Find the region belonging to this handle
 			const regions = this.renderer.regionManager?.getAllRegions() || [];
-			this.activeRegion =
-				regions.find((r) => r.name === this.draggingHandle!.userData.regionName) || null;
+			const regionName = this.draggingHandle.userData.regionName;
+			this.activeRegion = regions.find((r) => r.name === regionName) || null;
 
 			if (this.activeRegion) {
 				this.startDrag();

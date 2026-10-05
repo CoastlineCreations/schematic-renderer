@@ -43,3 +43,6 @@ node-compile-cache/
 # Local smoke-test scripts (not part of the package)
 smoke.html
 smoke-server.ts
+# Browser verification artifacts
+playwright-report/
+test-results/

@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { SchematicRenderer } from "../SchematicRenderer";
+import JSZip from "jszip";
 import { FFmpeg } from "@ffmpeg/ffmpeg";
 
 /**
@@ -446,17 +447,12 @@ export class RecordingManager {
 		const tempSettings = await this.setupTemporarySettings(width, height);
 
 		// Also resize composer if active
-		const rm = renderManager as any;
-		if (rm.composer) rm.composer.setSize(width, height);
+		renderManager.setComposerSize(width, height);
 
 		await new Promise((resolve) => requestAnimationFrame(resolve));
 		try {
 			// Render through composer (handles both alpha and opaque paths)
-			if (rm.composer) {
-				rm.composer.render();
-			} else {
-				renderManager.render();
-			}
+			renderManager.renderCaptureFrame();
 
 			if (transparent) {
 				// Capture directly from WebGL canvas to preserve alpha channel
@@ -483,7 +479,7 @@ export class RecordingManager {
 			}
 		} finally {
 			// Restore composer size
-			if (rm.composer) rm.composer.setSize(tempSettings.width, tempSettings.height);
+			renderManager.setComposerSize(tempSettings.width, tempSettings.height);
 			this.restoreSettings(tempSettings);
 
 			// Restore alpha mode
@@ -507,7 +503,8 @@ export class RecordingManager {
 		const canvas = document.createElement("canvas");
 		canvas.width = img.width;
 		canvas.height = img.height;
-		const ctx = canvas.getContext("2d")!;
+		const ctx = canvas.getContext("2d");
+		if (!ctx) throw new Error("2D canvas context unavailable");
 		ctx.drawImage(img, 0, 0);
 
 		return new Promise<Blob>((resolve, reject) => {
@@ -590,12 +587,13 @@ export class RecordingManager {
 	 * Write frames to FFmpeg in batches for better performance
 	 */
 	private async flushFrameBuffer(): Promise<void> {
-		if (!this.ffmpeg || this.frameBuffer.length === 0) return;
+		const ffmpeg = this.ffmpeg;
+		if (!ffmpeg || this.frameBuffer.length === 0) return;
 
 		const writePromises = this.frameBuffer.map(async (frame) => {
 			const ext = this.useJpegFrames ? "jpg" : "png";
 			const filename = `frame${frame.index.toString().padStart(6, "0")}.${ext}`;
-			await this.ffmpeg!.writeFile(filename, frame.data);
+			await ffmpeg.writeFile(filename, frame.data);
 		});
 
 		await Promise.all(writePromises);
@@ -608,6 +606,7 @@ export class RecordingManager {
 			this.stopRecording();
 			return;
 		}
+		const ffmpeg = this.ffmpeg;
 		if (this.isRecording) throw new Error("Recording already in progress");
 		console.log("Starting recording...");
 
@@ -758,7 +757,7 @@ export class RecordingManager {
 							await Promise.all(
 								encodedBatch.map(async (frame) => {
 									const filename = `frame${frame.index.toString().padStart(6, "0")}.${ext}`;
-									await this.ffmpeg!.writeFile(filename, frame.data);
+									await ffmpeg.writeFile(filename, frame.data);
 								})
 							);
 
@@ -824,7 +823,6 @@ export class RecordingManager {
 									onFfmpegProgress(progressPercent, time);
 								}
 							};
-							// @ts-ignore
 							this.ffmpeg.on("progress", progressCallback);
 
 							let lastReportedProgress = 50;
@@ -874,7 +872,7 @@ export class RecordingManager {
 
 						let blobData: BlobPart;
 						if (data instanceof Uint8Array) {
-							blobData = data as any;
+							blobData = new Uint8Array(data);
 						} else if (typeof data === "string") {
 							const binaryString = atob(data);
 							const bytes = new Uint8Array(binaryString.length);
@@ -894,7 +892,7 @@ export class RecordingManager {
 
 						try {
 							await this.ffmpeg.deleteFile(outputFilename);
-						} catch (e) {
+						} catch {
 							// Ignore cleanup errors
 						}
 
@@ -949,7 +947,6 @@ export class RecordingManager {
 		onFfmpegProgress?: (progress: number, time: number) => void
 	): Promise<Blob> {
 		if (!this.ffmpeg) throw new Error("FFmpeg not available — cannot read frames");
-		const { default: JSZip } = await import("jszip");
 		const zip = new JSZip();
 		const startedAt = performance.now();
 
@@ -999,13 +996,11 @@ export class RecordingManager {
 				this.ffmpegLogBuffer.shift();
 			}
 		};
-		// @ts-ignore — ffmpeg.wasm log event
 		this.ffmpeg.on("log", this.ffmpegLogHandler);
 	}
 
 	private detachFfmpegLogCapture(): void {
 		if (this.ffmpeg && this.ffmpegLogHandler) {
-			// @ts-ignore
 			this.ffmpeg.off?.("log", this.ffmpegLogHandler);
 		}
 		this.ffmpegLogHandler = null;
@@ -1091,7 +1086,8 @@ export class RecordingManager {
 		// Any alpha codec must use PNG to preserve the channel.
 		const useJpegFrames = needsAlpha ? false : (options.useJpegFrames ?? true);
 
-		if (!this.ffmpeg || !onFrame) return;
+		const ffmpeg = this.ffmpeg;
+		if (!ffmpeg || !onFrame) return;
 
 		this.useJpegFrames = useJpegFrames;
 		this.jpegQuality = jpegQuality;
@@ -1107,8 +1103,8 @@ export class RecordingManager {
 			await this.setupRecording(width, height);
 
 			// Resize composer if active
-			const rm = this.schematicRenderer.renderManager as any;
-			if (rm?.composer) rm.composer.setSize(width, height);
+			const rm = this.schematicRenderer.renderManager;
+			rm?.setComposerSize(width, height);
 
 			this.frameCount = 0;
 			this.isRecording = true;
@@ -1123,7 +1119,8 @@ export class RecordingManager {
 			const ctx = captureCanvas.getContext("2d", {
 				alpha: needsAlpha,
 				willReadFrequently: true,
-			})!;
+			});
+			if (!ctx) throw new Error("2D canvas context unavailable");
 
 			const frames: { data: Uint8Array; index: number }[] = [];
 
@@ -1134,11 +1131,7 @@ export class RecordingManager {
 				onFrame(progress);
 
 				// Render
-				if (rm?.composer) {
-					rm.composer.render();
-				} else {
-					this.schematicRenderer.renderManager?.render();
-				}
+				rm?.renderCaptureFrame();
 
 				// Capture
 				const mainCanvas = this.schematicRenderer.renderManager?.renderer.domElement;
@@ -1148,9 +1141,9 @@ export class RecordingManager {
 					ctx.globalCompositeOperation = "source-over";
 				}
 
-				const blob = await new Promise<Blob>((resolve) => {
+				const blob = await new Promise<Blob>((resolve, reject) => {
 					captureCanvas.toBlob(
-						(b) => resolve(b!),
+						(b) => (b ? resolve(b) : reject(new Error("Frame capture failed"))),
 						useJpegFrames ? "image/jpeg" : "image/png",
 						useJpegFrames ? jpegQuality : 1.0
 					);
@@ -1165,8 +1158,8 @@ export class RecordingManager {
 			}
 
 			// Restore renderer
-			if (rm?.composer && this.originalSettings) {
-				rm.composer.setSize(this.originalSettings.width, this.originalSettings.height);
+			if (rm && this.originalSettings) {
+				rm.setComposerSize(this.originalSettings.width, this.originalSettings.height);
 			}
 			this.cleanup();
 
@@ -1178,7 +1171,7 @@ export class RecordingManager {
 			// Write frames to FFmpeg
 			for (let i = 0; i < frames.length; i++) {
 				const filename = `frame${frames[i].index.toString().padStart(6, "0")}.${ext}`;
-				await this.ffmpeg!.writeFile(filename, frames[i].data);
+				await ffmpeg.writeFile(filename, frames[i].data);
 				if (onFfmpegProgress && i % 30 === 0) {
 					onFfmpegProgress(50 + (i / frames.length) * 25, 0);
 				}
@@ -1200,7 +1193,7 @@ export class RecordingManager {
 			const ffArgs = buildFfmpegArgs({ codec, frameRate, ext, encodingPreset, crf, bitrateMbps });
 			this.attachFfmpegLogCapture();
 			try {
-				await this.ffmpeg!.exec(ffArgs);
+				await ffmpeg.exec(ffArgs);
 			} catch (e) {
 				throw this.wrapFfmpegError(e, ffArgs);
 			} finally {
@@ -1208,7 +1201,7 @@ export class RecordingManager {
 			}
 
 			const { filename: outputFilename, mimeType: outputMime } = getOutputInfo(codec);
-			const data = await this.ffmpeg!.readFile(outputFilename);
+			const data = await ffmpeg.readFile(outputFilename);
 			const bytes = data instanceof Uint8Array ? data : new TextEncoder().encode(data as string);
 			const videoBlob = new Blob([bytes as BlobPart], { type: outputMime });
 
@@ -1217,7 +1210,7 @@ export class RecordingManager {
 
 			// Cleanup FFmpeg files
 			this.cleanupFramesAsync(frames.length, ext);
-			await this.ffmpeg!.deleteFile(outputFilename).catch(() => {});
+			await ffmpeg.deleteFile(outputFilename).catch(() => {});
 
 			this.isRecording = false;
 		} catch (error) {

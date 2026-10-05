@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import * as THREE from "three";
 
 // Mock all problematic imports
-vi.mock("nucleation", () => ({
+vi.mock("../../nucleationExports", () => ({
 	default: vi.fn().mockResolvedValue(undefined),
 	SchematicWrapper: class {},
 }));
@@ -125,5 +125,30 @@ describe("RenderManager", () => {
 			const color = new THREE.Color("blue");
 			expect(color.b).toBeCloseTo(1);
 		});
+	});
+});
+
+describe("camera changes", () => {
+	it("propagates the new camera through post-processing effects", async () => {
+		const { Effect, EffectPass } =
+			await vi.importActual<typeof import("postprocessing")>("postprocessing");
+		const { RenderManager } = await import("../RenderManager");
+		const oldCamera = new THREE.PerspectiveCamera();
+		const newCamera = new THREE.OrthographicCamera();
+		const effect = new Effect(
+			"CameraAwareEffect",
+			"void mainImage(const in vec4 inputColor, const in vec2 uv, out vec4 outputColor) { outputColor = inputColor; }"
+		);
+		const cameraChanged = vi.spyOn(effect, "mainCamera", "set");
+		const pass = new EffectPass(oldCamera, effect);
+		cameraChanged.mockClear();
+		const manager = {
+			getEffect: (name: string) => (name === "effectPass" ? pass : undefined),
+		} as unknown as InstanceType<typeof RenderManager>;
+
+		RenderManager.prototype.updateCamera.call(manager, newCamera);
+
+		expect(cameraChanged).toHaveBeenCalledWith(newCamera);
+		pass.dispose();
 	});
 });

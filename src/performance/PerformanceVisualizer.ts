@@ -1,6 +1,21 @@
 // src/performance/PerformanceVisualizer.ts
 import * as d3 from "d3";
-import { performanceMonitor } from "./PerformanceMonitor";
+import {
+	performanceMonitor,
+	type MeshBuildingSession,
+	type ChunkProcessingData,
+	type RendererStats,
+} from "./PerformanceMonitor";
+
+interface OperationStats {
+	operation: string;
+	totalDuration: number;
+	avgDuration: number;
+	count: number;
+	minDuration: number;
+	maxDuration: number;
+	percentage: number;
+}
 
 export interface VisualizationConfig {
 	container: HTMLElement;
@@ -15,7 +30,10 @@ export class PerformanceVisualizer {
 	private container: HTMLElement;
 	private config: Required<VisualizationConfig>;
 	private fpsMonitor: FPSMonitor | null = null;
-	private charts: Map<string, Chart> = new Map();
+	private charts: Map<
+		string,
+		FPSChart | FrameTimeChart | RendererStatsChart | TimingChart | ChunkProcessingChart
+	> = new Map();
 	private isVisible: boolean = false;
 	private onMeshModeChange?: (mode: "immediate" | "incremental" | "instanced") => void;
 
@@ -240,7 +258,7 @@ export class PerformanceVisualizer {
 		// Clear local chart buffers
 		this.charts.forEach((chart) => {
 			if (chart instanceof FPSChart || chart instanceof FrameTimeChart) {
-				(chart as any).clear();
+				chart.clear();
 			}
 		});
 
@@ -264,7 +282,7 @@ export class PerformanceVisualizer {
 }
 
 // Base Chart class
-abstract class Chart {
+abstract class Chart<T> {
 	protected container: HTMLElement;
 	protected svg: d3.Selection<SVGSVGElement, unknown, null, undefined>;
 	protected theme: "light" | "dark";
@@ -399,7 +417,7 @@ abstract class Chart {
 			.attr("height", this.height);
 	}
 
-	abstract updateData(data: any): void;
+	abstract updateData(data: T): void;
 
 	public getContainer(): HTMLElement {
 		return this.container;
@@ -412,7 +430,7 @@ abstract class Chart {
 }
 
 // Frame Time Chart (New)
-class FrameTimeChart extends Chart {
+class FrameTimeChart extends Chart<{ timestamp: number; duration: number }> {
 	private frameData: Array<{ timestamp: number; duration: number }> = [];
 	private maxDataPoints = 200;
 	private xScale!: d3.ScaleTime<number, number>;
@@ -437,7 +455,7 @@ class FrameTimeChart extends Chart {
 		this.redraw();
 	}
 
-	updateSessionData(sessions: any[]): void {
+	updateSessionData(sessions: MeshBuildingSession[]): void {
 		// If full session data is provided, prioritize it over live stream
 		if (sessions.length > 0) {
 			const latestSession = sessions[sessions.length - 1];
@@ -472,7 +490,9 @@ class FrameTimeChart extends Chart {
 		this.svg
 			.append("g")
 			.attr("transform", `translate(0,${this.height - this.margin.bottom})`)
-			.call(d3.axisBottom(this.xScale).tickFormat((d: any) => d3.timeFormat("%H:%M:%S")(d)));
+			.call(
+				d3.axisBottom(this.xScale).tickFormat((d) => d3.timeFormat("%H:%M:%S")(new Date(Number(d))))
+			);
 
 		this.svg
 			.append("g")
@@ -520,7 +540,7 @@ class FrameTimeChart extends Chart {
 				if (d.duration > 16.66) return "#FFC107"; // < 60fps (yellow)
 				return "#4CAF50"; // 60fps+ (green)
 			})
-			.on("mouseover", (event: MouseEvent, d: any) => {
+			.on("mouseover", (event: MouseEvent, d) => {
 				const tooltip = `
                     <strong>Duration:</strong> ${d.duration.toFixed(1)}ms<br>
                     <strong>Est FPS:</strong> ${(1000 / d.duration).toFixed(0)}
@@ -536,16 +556,16 @@ class FrameTimeChart extends Chart {
 }
 
 // Renderer Stats Chart (New)
-class RendererStatsChart extends Chart {
+class RendererStatsChart extends Chart<MeshBuildingSession[]> {
 	constructor(theme: "light" | "dark") {
 		super(theme, "Renderer Load (Triangles & Draw Calls)");
 	}
 
-	updateData(sessions: any[]): void {
+	updateData(sessions: MeshBuildingSession[]): void {
 		this.redraw(sessions);
 	}
 
-	protected redraw(sessions: any[] = []): void {
+	protected redraw(sessions: MeshBuildingSession[] = []): void {
 		this.svg.selectAll("*").remove();
 
 		// Get stats history from latest session
@@ -558,7 +578,7 @@ class RendererStatsChart extends Chart {
 		const data = session.rendererStatsHistory;
 
 		// Scales
-		const extent = d3.extent(data, (d: any) => d.timestamp);
+		const extent = d3.extent(data, (d) => d.timestamp);
 		const xDomain: [Date, Date] = [
 			new Date(extent[0] !== undefined ? extent[0] : Date.now()),
 			new Date(extent[1] !== undefined ? extent[1] : Date.now()),
@@ -570,14 +590,14 @@ class RendererStatsChart extends Chart {
 			.range([this.margin.left, this.width - this.margin.right]);
 
 		// Left Axis: Triangles (Log scale might be better?)
-		const maxTriangles = d3.max(data, (d: any) => Number(d.triangles)) || 100;
+		const maxTriangles = d3.max(data, (d) => Number(d.triangles)) || 100;
 		const yScaleTris = d3
 			.scaleLinear()
 			.domain([0, maxTriangles])
 			.range([this.height - this.margin.bottom, this.margin.top]);
 
 		// Right Axis: Draw Calls
-		const maxCalls = d3.max(data, (d: any) => Number(d.drawCalls)) || 10;
+		const maxCalls = d3.max(data, (d) => Number(d.drawCalls)) || 10;
 		const yScaleCalls = d3
 			.scaleLinear()
 			.domain([0, maxCalls])
@@ -591,7 +611,7 @@ class RendererStatsChart extends Chart {
 				d3
 					.axisBottom(xScale)
 					.ticks(5)
-					.tickFormat((d: any) => d3.timeFormat("%H:%M:%S")(d))
+					.tickFormat((d) => d3.timeFormat("%H:%M:%S")(new Date(Number(d))))
 			);
 
 		// Left Y (Triangles)
@@ -602,7 +622,7 @@ class RendererStatsChart extends Chart {
 				d3
 					.axisLeft(yScaleTris)
 					.ticks(5)
-					.tickFormat((d: any) => (Number(d) >= 1000 ? `${Number(d) / 1000}k` : `${d}`))
+					.tickFormat((d) => (Number(d) >= 1000 ? `${Number(d) / 1000}k` : `${d}`))
 			)
 			.call((g) => g.select(".domain").attr("stroke", "#2196F3"))
 			.call((g) => g.selectAll("text").attr("fill", "#2196F3"));
@@ -617,12 +637,12 @@ class RendererStatsChart extends Chart {
 
 		// Lines
 		const lineTris = d3
-			.line<any>()
+			.line<RendererStats>()
 			.x((d) => xScale(d.timestamp))
 			.y((d) => yScaleTris(d.triangles));
 
 		const lineCalls = d3
-			.line<any>()
+			.line<RendererStats>()
 			.x((d) => xScale(d.timestamp))
 			.y((d) => yScaleCalls(d.drawCalls));
 
@@ -672,7 +692,7 @@ class RendererStatsChart extends Chart {
 }
 
 // FPS Chart for live monitoring
-class FPSChart extends Chart {
+class FPSChart extends Chart<{ timestamp: number; fps: number }> {
 	private fpsData: Array<{ timestamp: number; fps: number }> = [];
 	private maxDataPoints = 100;
 	private line!: d3.Line<{ timestamp: number; fps: number }>;
@@ -706,7 +726,9 @@ class FPSChart extends Chart {
 			.append("g")
 			.attr("class", "x-axis")
 			.attr("transform", `translate(0,${this.height - this.margin.bottom})`)
-			.call(d3.axisBottom(this.xScale).tickFormat((d: any) => d3.timeFormat("%H:%M:%S")(d)));
+			.call(
+				d3.axisBottom(this.xScale).tickFormat((d) => d3.timeFormat("%H:%M:%S")(new Date(Number(d))))
+			);
 
 		// Y-axis
 		this.svg
@@ -798,7 +820,7 @@ class FPSChart extends Chart {
 			.attr("stroke", "#fff")
 			.attr("stroke-width", 1)
 			.style("cursor", "pointer")
-			.on("mouseover", (event: MouseEvent, d: any) => {
+			.on("mouseover", (event: MouseEvent, d) => {
 				const tooltipContent = `
                     <strong>FPS:</strong> ${Math.round(d.fps)}<br>
                     <strong>Time:</strong> ${d3.timeFormat("%H:%M:%S")(new Date(d.timestamp))}
@@ -821,8 +843,8 @@ class FPSChart extends Chart {
 }
 
 // Operation Timing Chart
-class TimingChart extends Chart {
-	private pieData: any[] = [];
+class TimingChart extends Chart<MeshBuildingSession[]> {
+	private pieData: OperationStats[] = [];
 	private totalTime: number = 0;
 
 	constructor(theme: "light" | "dark") {
@@ -833,7 +855,7 @@ class TimingChart extends Chart {
 		this.drawPieChart();
 	}
 
-	updateData(sessions: any[]): void {
+	updateData(sessions: MeshBuildingSession[]): void {
 		this.svg.selectAll("*").remove();
 
 		if (!sessions.length) {
@@ -850,13 +872,13 @@ class TimingChart extends Chart {
 		}
 
 		// Group by operation and calculate totals
-		const operationGroups = d3.group(timingData, (d: any) => d.name);
+		const operationGroups = d3.group(timingData, (d) => d.name);
 		const operationStats = Array.from(operationGroups, ([operation, values]) => {
-			const totalDuration = d3.sum(values, (d: any) => d.duration);
-			const avgDuration = d3.mean(values, (d: any) => d.duration) || 0;
+			const totalDuration = d3.sum(values, (d) => d.duration);
+			const avgDuration = d3.mean(values, (d) => d.duration) || 0;
 			const count = values.length;
-			const minDuration = d3.min(values, (d: any) => d.duration) || 0;
-			const maxDuration = d3.max(values, (d: any) => d.duration) || 0;
+			const minDuration = d3.min(values, (d) => d.duration) || 0;
+			const maxDuration = d3.max(values, (d) => d.duration) || 0;
 
 			return {
 				operation,
@@ -912,15 +934,15 @@ class TimingChart extends Chart {
 
 		// Create pie generator
 		const pie = d3
-			.pie<any>()
+			.pie<OperationStats>()
 			.value((d) => d.totalDuration)
 			.sort(null);
 
 		// Create arc generator
-		const arc = d3.arc<any>().innerRadius(0).outerRadius(radius);
+		const arc = d3.arc<d3.PieArcDatum<OperationStats>>().innerRadius(0).outerRadius(radius);
 
 		const labelArc = d3
-			.arc<any>()
+			.arc<d3.PieArcDatum<OperationStats>>()
 			.innerRadius(radius * 0.7)
 			.outerRadius(radius * 0.7);
 
@@ -943,7 +965,7 @@ class TimingChart extends Chart {
 			.attr("stroke-width", 2)
 			.style("cursor", "pointer")
 			.style("opacity", 0.8)
-			.on("mouseover", (event: MouseEvent, d: any) => {
+			.on("mouseover", (event: MouseEvent, d) => {
 				// Highlight slice
 				d3.select(event.target as Element)
 					.transition()
@@ -1065,7 +1087,7 @@ class TimingChart extends Chart {
 }
 
 // Chunk Processing Chart
-class ChunkProcessingChart extends Chart {
+class ChunkProcessingChart extends Chart<MeshBuildingSession[]> {
 	private currentView: "overview" | "blocks" | "memory" = "overview";
 
 	constructor(theme: "light" | "dark") {
@@ -1088,7 +1110,7 @@ class ChunkProcessingChart extends Chart {
 			{ key: "overview", label: "Overview" },
 			{ key: "blocks", label: "Block Distribution" },
 			{ key: "memory", label: "Memory Usage" },
-		];
+		] as const;
 
 		buttons.forEach(({ key, label }) => {
 			const btn = document.createElement("button");
@@ -1103,7 +1125,7 @@ class ChunkProcessingChart extends Chart {
                 border-radius: 3px;
             `;
 			btn.onclick = () => {
-				this.currentView = key as any;
+				this.currentView = key;
 				this.updateViewControls();
 				this.redraw();
 			};
@@ -1133,7 +1155,7 @@ class ChunkProcessingChart extends Chart {
 		});
 	}
 
-	updateData(_sessions: any[]): void {
+	updateData(_sessions: MeshBuildingSession[]): void {
 		this.redraw();
 	}
 
@@ -1167,11 +1189,11 @@ class ChunkProcessingChart extends Chart {
 		}
 	}
 
-	private getLatestSessionData(): any[] {
+	private getLatestSessionData(): MeshBuildingSession[] {
 		return performanceMonitor.getAllSessions();
 	}
 
-	private drawOverview(chunkData: any[]): void {
+	private drawOverview(chunkData: ChunkProcessingData[]): void {
 		const stats = this.calculateOverviewStats(chunkData);
 
 		// Create a summary view with key metrics
@@ -1241,8 +1263,8 @@ class ChunkProcessingChart extends Chart {
 		});
 	}
 
-	private drawBlockDistribution(chunkData: any[]): void {
-		const blockCounts = chunkData.map((d: any) => d.blockCount);
+	private drawBlockDistribution(chunkData: ChunkProcessingData[]): void {
+		const blockCounts = chunkData.map((d) => d.blockCount);
 		const bins = d3
 			.histogram()
 			.domain([0, Number(d3.max(blockCounts)) || 0])
@@ -1255,7 +1277,7 @@ class ChunkProcessingChart extends Chart {
 
 		const yScale = d3
 			.scaleLinear()
-			.domain([0, Number(d3.max(bins, (d: any) => d?.length || 0)) || 0])
+			.domain([0, Number(d3.max(bins, (d) => d?.length || 0)) || 0])
 			.range([this.height - this.margin.bottom, this.margin.top]);
 
 		// Add axes
@@ -1276,17 +1298,17 @@ class ChunkProcessingChart extends Chart {
 			.enter()
 			.append("rect")
 			.attr("class", "bar")
-			.attr("x", (d: any) => xScale(d.x0!))
-			.attr("y", (d: any) => yScale(d.length))
-			.attr("width", (d: any) => Math.max(0, xScale(d.x1!) - xScale(d.x0!) - 1))
-			.attr("height", (d: any) => this.height - this.margin.bottom - yScale(d.length))
+			.attr("x", (d) => xScale(d.x0 ?? 0))
+			.attr("y", (d) => yScale(d.length))
+			.attr("width", (d) => Math.max(0, xScale(d.x1 ?? 0) - xScale(d.x0 ?? 0) - 1))
+			.attr("height", (d) => this.height - this.margin.bottom - yScale(d.length))
 			.attr("fill", "#9C27B0")
 			.attr("stroke", this.theme === "dark" ? "#2a2a2a" : "#fff")
 			.attr("stroke-width", 1)
 			.style("cursor", "pointer")
-			.on("mouseover", (event: MouseEvent, d: any) => {
+			.on("mouseover", (event: MouseEvent, d) => {
 				const tooltipContent = `
-                    <strong>Block Range:</strong> ${Math.round(d.x0!)}-${Math.round(d.x1!)}<br>
+                    <strong>Block Range:</strong> ${Math.round(d.x0 ?? 0)}-${Math.round(d.x1 ?? 0)}<br>
                     <strong>Chunks:</strong> ${d.length}<br>
                     <strong>Percentage:</strong> ${((d.length / chunkData.length) * 100).toFixed(1)}%
                 `;
@@ -1322,16 +1344,16 @@ class ChunkProcessingChart extends Chart {
 		this.svg.selectAll("path, line").attr("stroke", this.theme === "dark" ? "#666" : "#333");
 	}
 
-	private drawMemoryUsage(chunkData: any[]): void {
+	private drawMemoryUsage(chunkData: ChunkProcessingData[]): void {
 		// Create a scatter plot of memory usage vs block count
 		const xScale = d3
 			.scaleLinear()
-			.domain([0, d3.max(chunkData, (d: any) => d.blockCount) || 0])
+			.domain([0, d3.max(chunkData, (d) => d.blockCount) || 0])
 			.range([this.margin.left, this.width - this.margin.right]);
 
 		const yScale = d3
 			.scaleLinear()
-			.domain([0, d3.max(chunkData, (d: any) => d.memoryUsed) || 0])
+			.domain([0, d3.max(chunkData, (d) => d.memoryUsed) || 0])
 			.range([this.height - this.margin.bottom, this.margin.top]);
 
 		// Add axes
@@ -1352,15 +1374,15 @@ class ChunkProcessingChart extends Chart {
 			.enter()
 			.append("circle")
 			.attr("class", "memory-point")
-			.attr("cx", (d: any) => xScale(d.blockCount))
-			.attr("cy", (d: any) => yScale(d.memoryUsed))
+			.attr("cx", (d) => xScale(d.blockCount))
+			.attr("cy", (d) => yScale(d.memoryUsed))
 			.attr("r", 4)
 			.attr("fill", "#FF6B6B")
 			.attr("stroke", "#fff")
 			.attr("stroke-width", 1)
 			.style("cursor", "pointer")
 			.style("opacity", 0.7)
-			.on("mouseover", (event: MouseEvent, d: any) => {
+			.on("mouseover", (event: MouseEvent, d) => {
 				const tooltipContent = `
                     <strong>Chunk:</strong> [${d.chunkCoords.join(", ")}]<br>
                     <strong>Blocks:</strong> ${d.blockCount}<br>
@@ -1397,7 +1419,7 @@ class ChunkProcessingChart extends Chart {
 			];
 
 			const line = d3
-				.line<any>()
+				.line<{ x: number; y: number }>()
 				.x((d) => xScale(d.x))
 				.y((d) => yScale(d.y));
 
@@ -1427,7 +1449,7 @@ class ChunkProcessingChart extends Chart {
 		this.svg.selectAll("path, line").attr("stroke", this.theme === "dark" ? "#666" : "#333");
 	}
 
-	private calculateOverviewStats(chunkData: any[]): any {
+	private calculateOverviewStats(chunkData: ChunkProcessingData[]) {
 		return {
 			totalChunks: chunkData.length,
 			totalBlocks: chunkData.reduce((sum, chunk) => sum + chunk.blockCount, 0),
@@ -1440,7 +1462,11 @@ class ChunkProcessingChart extends Chart {
 		};
 	}
 
-	private calculateCorrelation(data: any[], xKey: string, yKey: string): number {
+	private calculateCorrelation<K extends string>(
+		data: Record<K, number>[],
+		xKey: K,
+		yKey: K
+	): number {
 		const n = data.length;
 		if (n < 2) return 0;
 
@@ -1463,10 +1489,10 @@ class ChunkProcessingChart extends Chart {
 		return denominator === 0 ? 0 : numerator / denominator;
 	}
 
-	private calculateLinearRegression(
-		data: any[],
-		xKey: string,
-		yKey: string
+	private calculateLinearRegression<K extends string>(
+		data: Record<K, number>[],
+		xKey: K,
+		yKey: K
 	): { slope: number; intercept: number } {
 		const xMean = d3.mean(data, (d) => d[xKey]) || 0;
 		const yMean = d3.mean(data, (d) => d[yKey]) || 0;

@@ -45,8 +45,8 @@ export class ResourcePackManager {
 	private packs: Map<string, StoredResourcePack> = new Map();
 
 	// Event handlers
-	private eventHandlers: Map<PackEventType, Set<PackEventHandler<any>>> = new Map();
-	private onceHandlers: Map<PackEventType, Set<PackEventHandler<any>>> = new Map();
+	private eventHandlers: Map<PackEventType, Set<PackEventHandler<PackEventType>>> = new Map();
+	private onceHandlers: Map<PackEventType, Set<PackEventHandler<PackEventType>>> = new Map();
 
 	// Batch mode
 	private batchMode: boolean = false;
@@ -199,10 +199,9 @@ export class ResourcePackManager {
 	 * Subscribe to a pack event
 	 */
 	public onPackEvent<T extends PackEventType>(event: T, handler: PackEventHandler<T>): void {
-		if (!this.eventHandlers.has(event)) {
-			this.eventHandlers.set(event, new Set());
-		}
-		this.eventHandlers.get(event)!.add(handler);
+		const handlers = this.eventHandlers.get(event) ?? new Set<PackEventHandler<PackEventType>>();
+		handlers.add(handler as PackEventHandler<PackEventType>);
+		this.eventHandlers.set(event, handlers);
 	}
 
 	/**
@@ -216,17 +215,16 @@ export class ResourcePackManager {
 	 * Unsubscribe from a pack event
 	 */
 	public offPackEvent<T extends PackEventType>(event: T, handler: PackEventHandler<T>): void {
-		this.eventHandlers.get(event)?.delete(handler);
+		this.eventHandlers.get(event)?.delete(handler as PackEventHandler<PackEventType>);
 	}
 
 	/**
 	 * Subscribe to a pack event once
 	 */
 	public oncePackEvent<T extends PackEventType>(event: T, handler: PackEventHandler<T>): void {
-		if (!this.onceHandlers.has(event)) {
-			this.onceHandlers.set(event, new Set());
-		}
-		this.onceHandlers.get(event)!.add(handler);
+		const handlers = this.onceHandlers.get(event) ?? new Set<PackEventHandler<PackEventType>>();
+		handlers.add(handler as PackEventHandler<PackEventType>);
+		this.onceHandlers.set(event, handlers);
 	}
 
 	private emit<T extends PackEventType>(event: T, payload: PackEventMap[T]): void {
@@ -670,7 +668,8 @@ export class ResourcePackManager {
 
 		// Update priorities based on array order
 		for (let i = 0; i < packIds.length; i++) {
-			const pack = this.packs.get(packIds[i])!;
+			const pack = this.packs.get(packIds[i]);
+			if (!pack) throw new Error(`Pack ${packIds[i]} not found`);
 			pack.priority = i;
 			await this.savePack(pack);
 		}
@@ -824,7 +823,8 @@ export class ResourcePackManager {
 					assetPath: path,
 					type: type as "texture" | "blockstate" | "model",
 					providers: entry.providers.map((id) => {
-						const pack = this.packs.get(id)!;
+						const pack = this.packs.get(id);
+						if (!pack) throw new Error(`Pack ${id} not found`);
 						return {
 							packId: id,
 							packName: pack.name,

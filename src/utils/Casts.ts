@@ -1,6 +1,6 @@
 import * as THREE from "three";
 
-export function castToVector3(value: any): THREE.Vector3 {
+export function castToVector3(value: unknown): THREE.Vector3 {
 	if (Array.isArray(value)) {
 		return new THREE.Vector3(value[0], value[1], value[2]);
 	} else if (value instanceof THREE.Vector3) {
@@ -13,7 +13,7 @@ export function castToVector3(value: any): THREE.Vector3 {
 	}
 }
 
-export function castToEuler(value: any): THREE.Euler {
+export function castToEuler(value: unknown): THREE.Euler {
 	if (Array.isArray(value)) {
 		return new THREE.Euler(value[0], value[1], value[2]);
 	} else if (value instanceof THREE.Euler) {

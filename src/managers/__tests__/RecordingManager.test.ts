@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import * as THREE from "three";
 
 // Mock all problematic imports
-vi.mock("nucleation", () => ({
+vi.mock("../../nucleationExports", () => ({
 	default: vi.fn().mockResolvedValue(undefined),
 	SchematicWrapper: class {},
 }));
@@ -138,6 +138,8 @@ function createMockSchematicRenderer(overrides: Record<string, any> = {}) {
 		renderManager: {
 			renderer: mockRenderer,
 			render: vi.fn(),
+			setComposerSize: vi.fn(),
+			renderCaptureFrame: vi.fn(),
 			isAlphaMode: vi.fn().mockReturnValue(false),
 			setAlphaMode: vi.fn().mockResolvedValue(undefined),
 			composer: null,
@@ -852,5 +854,49 @@ describe("RecordingManager", () => {
 			expect(rm.isRecording).toBe(false);
 			expect(mockSR._mockFFmpeg.terminate).toHaveBeenCalled();
 		});
+	});
+});
+
+describe("capture failures", () => {
+	it("rejects a missing 2D context and restores the camera", async () => {
+		const { RecordingManager } = await import("../RecordingManager");
+		const mockSR = createMockSchematicRenderer();
+		const getContext = vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
+		try {
+			const manager = new RecordingManager(mockSR as any);
+			const originalAspect = mockSR.cameraManager.activeCamera.camera.aspect;
+			await expect(
+				manager.startRecording(1, { width: 100, height: 100, frameRate: 2, onFrame: () => {} })
+			).rejects.toThrow("2D canvas context unavailable");
+			expect(manager.isRecording).toBe(false);
+			expect(mockSR.cameraManager.activeCamera.camera.aspect).toBe(originalAspect);
+			expect(mockSR._mockFFmpeg.exec).not.toHaveBeenCalled();
+		} finally {
+			getContext.mockRestore();
+		}
+	});
+
+	it("rejects a failed canvas encoding before passing empty frames to FFmpeg", async () => {
+		const { RecordingManager } = await import("../RecordingManager");
+		const mockSR = createMockSchematicRenderer();
+		const getContext = vi
+			.spyOn(HTMLCanvasElement.prototype, "getContext")
+			.mockImplementation(((contextType: string) =>
+				contextType === "2d" ? { drawImage: vi.fn() } : null) as HTMLCanvasElement["getContext"]);
+		const toBlob = vi
+			.spyOn(HTMLCanvasElement.prototype, "toBlob")
+			.mockImplementation((callback) => callback(null));
+		try {
+			const manager = new RecordingManager(mockSR as any);
+			await expect(manager.startRecording(1, { frameRate: 2, onFrame: () => {} })).rejects.toThrow(
+				"Frame capture failed"
+			);
+			expect(manager.isRecording).toBe(false);
+			expect(mockSR._mockFFmpeg.writeFile).not.toHaveBeenCalled();
+			expect(mockSR._mockFFmpeg.exec).not.toHaveBeenCalled();
+		} finally {
+			getContext.mockRestore();
+			toBlob.mockRestore();
+		}
 	});
 });

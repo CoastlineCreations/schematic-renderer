@@ -33,7 +33,7 @@ export interface DslEntry {
 	 * Keys are namespaced (e.g., "io.type", "doc.label", "logic.clock_hz")
 	 * Values can be any JSON-serializable type
 	 */
-	metadata: Record<string, any>;
+	metadata: Record<string, unknown>;
 }
 
 /**

@@ -129,3 +129,8 @@ export type {
 
 // Re-export nucleation to provide single WASM instance across the app
 export * from "./nucleationExports";
+
+// Native block-entity renderers and resource-independent NBT helpers.
+export * from "./block-entities";
+
+export { createPreviewOptions } from "./presets";

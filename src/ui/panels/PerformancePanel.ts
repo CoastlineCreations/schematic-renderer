@@ -1,5 +1,7 @@
 // PerformancePanel.ts - Panel for performance monitoring
 
+import type { PerformanceWithMemory } from "../../types/browser";
+
 import { BasePanel, BasePanelOptions } from "./BasePanel";
 import { UIColors, createSettingRow, createToggle, createSlider } from "../UIComponents";
 
@@ -114,48 +116,32 @@ export class PerformancePanel extends BasePanel {
 		section.appendChild(createSettingRow("Auto Update", autoUpdateToggle));
 
 		// Target FPS slider
-		const currentTargetFPS = (this.renderer as any).targetFPS ?? 60;
+		const currentTargetFPS = this.renderer.getTargetFPS();
 		const targetFpsSlider = createSlider(currentTargetFPS, {
 			min: 10,
 			max: 144,
 			step: 1,
 			formatValue: (v) => `${v}`,
 			onChange: (value) => {
-				(this.renderer as any).targetFPS = value;
+				this.renderer.setTargetFPS(value);
 			},
 		});
 		section.appendChild(createSettingRow("Target FPS", targetFpsSlider));
 
-		// Adaptive FPS / Idle Mode toggle
-		const adaptiveFpsEnabled = (this.renderer as any).enableAdaptiveFPS ?? true;
-		const idleModeToggle = createToggle(adaptiveFpsEnabled, (enabled) => {
-			(this.renderer as any).enableAdaptiveFPS = enabled;
-			// Force wake from idle when disabling
-			if (!enabled) {
-				(this.renderer as any).isIdle = false;
-				(this.renderer as any).lastInteractionTime = performance.now();
-			}
-		});
-		section.appendChild(
-			createSettingRow("Idle Mode", idleModeToggle, {
-				tooltip: "Reduce FPS when scene is idle to save power",
-			})
-		);
-
-		// Idle FPS slider (only relevant when idle mode is on)
-		const currentIdleFPS = (this.renderer as any).idleFPS ?? 1;
+		// Polling rate for direct camera mutations while rendering is idle
+		const currentIdleFPS = this.renderer.getIdleFPS();
 		const idleFpsSlider = createSlider(currentIdleFPS, {
 			min: 1,
 			max: 30,
 			step: 1,
 			formatValue: (v) => `${v}`,
 			onChange: (value) => {
-				(this.renderer as any).idleFPS = value;
+				this.renderer.setIdleFPS(value);
 			},
 		});
 		section.appendChild(
 			createSettingRow("Idle FPS", idleFpsSlider, {
-				tooltip: "FPS when scene is idle (lower = less power usage)",
+				tooltip: "Camera checks per second while idle (lower = less power usage)",
 			})
 		);
 
@@ -199,12 +185,12 @@ export class PerformancePanel extends BasePanel {
 		const info = renderer.info;
 
 		// Get FPS from the main renderer (which tracks actual render frames)
-		const actualFps = (this.renderer as any).fps ?? 0;
+		const actualFps = this.renderer.getFPS();
 
 		const metrics: PerformanceMetrics = {
 			fps: Math.round(actualFps),
 			frameTime: actualFps > 0 ? Math.round(1000 / actualFps) : 0,
-			drawCalls: info.render?.calls ?? 0,
+			drawCalls: ("drawCalls" in info.render ? info.render.drawCalls : info.render.calls) ?? 0,
 			triangles: info.render?.triangles ?? 0,
 			geometries: info.memory?.geometries ?? 0,
 			textures: info.memory?.textures ?? 0,
@@ -216,7 +202,7 @@ export class PerformancePanel extends BasePanel {
 
 	private getMemoryUsage(): number {
 		// Use performance.memory if available (Chrome only)
-		const perf = performance as any;
+		const perf = performance as PerformanceWithMemory;
 		if (perf.memory) {
 			return Math.round(perf.memory.usedJSHeapSize / (1024 * 1024));
 		}
@@ -253,12 +239,16 @@ export class PerformancePanel extends BasePanel {
 	public getMetrics(): PerformanceMetrics {
 		const renderer = this.renderer.renderManager?.getRenderer();
 		const info = renderer?.info;
-		const actualFps = (this.renderer as any).fps ?? 0;
+		const actualFps = this.renderer.getFPS();
 
 		return {
 			fps: Math.round(actualFps),
 			frameTime: actualFps > 0 ? Math.round(1000 / actualFps) : 0,
-			drawCalls: info?.render?.calls ?? 0,
+			drawCalls: info
+				? "drawCalls" in info.render
+					? info.render.drawCalls
+					: info.render.calls
+				: 0,
 			triangles: info?.render?.triangles ?? 0,
 			geometries: info?.memory?.geometries ?? 0,
 			textures: info?.memory?.textures ?? 0,

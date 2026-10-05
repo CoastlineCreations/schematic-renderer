@@ -1,23 +1,16 @@
 // HoverHighlight.ts
 import * as THREE from "three";
 import { Highlight } from "./Highlight";
-import { BlockData } from "./types";
 import { SchematicRenderer } from "../../SchematicRenderer";
 import { SelectableObject } from "../../managers/SelectableObject";
 
 export class HoverHighlight implements Highlight {
 	private schematicRenderer: SchematicRenderer;
 	private hoverMesh: THREE.Mesh | null = null;
-	// @ts-ignore
-	private raycaster: THREE.Raycaster;
-	// @ts-ignore
-	private mouse: THREE.Vector2;
 	private lastHoveredObject: SelectableObject | null = null;
 
 	constructor(schematicRenderer: SchematicRenderer) {
 		this.schematicRenderer = schematicRenderer;
-		this.raycaster = new THREE.Raycaster();
-		this.mouse = new THREE.Vector2();
 
 		// Bind the methods to ensure correct 'this' context
 		this.onHoverEnter = this.onHoverEnter.bind(this);
@@ -36,8 +29,7 @@ export class HoverHighlight implements Highlight {
 		this.removeHoverMesh();
 	}
 
-	// @ts-ignore
-	update(deltaTime: number) {
+	update(_deltaTime: number) {
 		// No periodic update needed for hover effect
 	}
 
@@ -82,35 +74,5 @@ export class HoverHighlight implements Highlight {
 			this.schematicRenderer.sceneManager.scene.remove(this.hoverMesh);
 			this.hoverMesh = null;
 		}
-	}
-
-	// @ts-ignore
-	private getBlockData(position: THREE.Vector3): BlockData | null {
-		// Access the schematic to get block data
-		if (!this.schematicRenderer.schematicManager) return null;
-		const firstSchematic = this.schematicRenderer.schematicManager.getAllSchematics()[0];
-		if (!firstSchematic) return null;
-
-		const block = firstSchematic.schematicWrapper.get_block_with_properties(
-			position.x,
-			position.y,
-			position.z
-		);
-
-		if (block) {
-			const blockEntity = firstSchematic.schematicWrapper.get_block_entity(
-				position.x,
-				position.y,
-				position.z
-			);
-
-			return {
-				name: block.name(),
-				properties: block.properties(),
-				blockEntity,
-			};
-		}
-
-		return null;
 	}
 }

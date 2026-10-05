@@ -1,5 +1,8 @@
 // SchematicRendererOptions.ts
 
+import type { FFmpeg } from "@ffmpeg/ffmpeg";
+import type { RenderSettings } from "./ui/panels/RenderSettingsPanel";
+import type { ControlsSettings } from "./ui/panels/ControlsPanel";
 import { InteractionManagerOptions } from "./managers/InteractionManager";
 import { DragAndDropManagerOptions } from "./managers/DragAndDropManager";
 import { GizmoManagerOptions } from "./managers/GizmoManager";
@@ -9,6 +12,7 @@ import { SchematicRenderer } from "./SchematicRenderer";
 import { ResourcePackOptions } from "./types/resourcePack";
 import { SidebarOptions, DEFAULT_SIDEBAR_OPTIONS } from "./ui/sidebar/types";
 import type { SlicerOverlayOptions } from "./ui/SlicerOverlay";
+import type { BlockEntityOptions } from "./block-entities";
 import type { SchematicRendererContext } from "./SchematicRendererContext";
 
 // Re-export sidebar types for consumers
@@ -82,12 +86,12 @@ export interface DebugOptions {
 		controls: Array<{
 			name: string;
 			type: "number" | "boolean" | "color" | "button" | "select";
-			value?: any;
+			value?: unknown;
 			min?: number;
 			max?: number;
 			step?: number;
-			options?: string[] | Record<string, any>;
-			onChange?: (value: any) => void;
+			options?: string[] | Record<string, unknown>;
+			onChange?: (value: unknown) => void;
 		}>;
 	}>;
 }
@@ -252,10 +256,12 @@ export interface WebGPURendererOptions {
 }
 
 export interface SchematicRendererOptions {
+	/** Native block-entity rendering and extensible renderer registry. */
+	blockEntityOptions?: BlockEntityOptions;
 	backgroundColor?: number | string; // Accepts hex color or CSS color string
 	hdri?: string;
 	resourcePackBlobs?: Blob[];
-	ffmpeg?: any;
+	ffmpeg?: FFmpeg;
 	gamma?: number;
 	chunkSideLength?: number; // Length of each chunk side in blocks
 	meshBuildingMode?: "immediate" | "incremental" | "instanced" | "batched"; // How meshes are built
@@ -500,8 +506,8 @@ export interface Callbacks {
 	onBlockInteracted?: (x: number, y: number, z: number) => void;
 
 	// UI callbacks
-	onRenderSettingsChanged?: (settings: any) => void;
+	onRenderSettingsChanged?: (settings: RenderSettings) => void;
 	onScreenshotTaken?: (blob: Blob, filename: string) => void;
 	onRecordingComplete?: (blob: Blob, filename: string) => void;
-	onControlsChanged?: (settings: any) => void;
+	onControlsChanged?: (settings: ControlsSettings) => void;
 }

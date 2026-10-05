@@ -151,8 +151,7 @@ export class CameraPathManager {
 	 */
 	private calculateOptimalCircularPath(
 		center: THREE.Vector3,
-		// @ts-ignore
-		size: THREE.Vector3,
+		_size: THREE.Vector3,
 		boundingBox: THREE.Box3,
 		padding: number,
 		minRadius: number,
@@ -349,14 +348,11 @@ export class CameraPathManager {
 	 * Calculate optimal height for a given radius
 	 */
 	private calculateOptimalHeight(
-		// @ts-ignore
-		center: THREE.Vector3,
+		_center: THREE.Vector3,
 		boundingBox: THREE.Box3,
 		radius: number,
-		// @ts-ignore
-		fovRad: number,
-		// @ts-ignore
-		padding: number
+		_fovRad: number,
+		_padding: number
 	): number {
 		const size = boundingBox.getSize(new THREE.Vector3());
 
@@ -388,11 +384,6 @@ export class CameraPathManager {
 		const {
 			duration = 30, // 30 seconds
 			keyFrames = 12,
-			// @ts-ignore
-			heightVariation = true,
-			// @ts-ignore
-
-			spiralEffect = false,
 		} = options;
 
 		const bounds = this.calculateSchematicBounds();
@@ -409,7 +400,10 @@ export class CameraPathManager {
 		);
 	}
 
-	public updatePathParameters(name: string, params: any): void {
+	public updatePathParameters(
+		name: string,
+		params: Parameters<CameraPath["updateParameters"]>[0]
+	): void {
 		const path = this.paths.get(name);
 		if (path) {
 			path.updateParameters(params);

@@ -1,13 +1,13 @@
-class AnimationScheduler {
+class AnimationScheduler<Parent = unknown> {
 	private queue: Array<{ action: () => void; delay: number }> = [];
 	private isRunning: boolean = false;
-	private parent: any;
+	private parent: Parent;
 
-	constructor(parent: any) {
+	constructor(parent: Parent) {
 		this.parent = parent;
 	}
 
-	schedule(action: () => void, delay: number = 0): any {
+	schedule(action: () => void, delay: number = 0): Parent {
 		this.queue.push({ action, delay });
 		if (!this.isRunning) {
 			this.runNext();
@@ -16,13 +16,14 @@ class AnimationScheduler {
 	}
 
 	private runNext() {
-		if (this.queue.length === 0) {
+		const next = this.queue.shift();
+		if (!next) {
 			this.isRunning = false;
 			return;
 		}
 
 		this.isRunning = true;
-		const { action, delay } = this.queue.shift()!;
+		const { action, delay } = next;
 
 		setTimeout(() => {
 			action();
@@ -30,7 +31,7 @@ class AnimationScheduler {
 		}, delay);
 	}
 
-	clear(): any {
+	clear(): Parent {
 		this.queue = [];
 		this.isRunning = false;
 		return this.parent; // Return the parent object for method chaining

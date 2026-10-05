@@ -1,3 +1,5 @@
+import type { PerformanceWithMemory } from "./types/browser";
+
 interface PerformanceMetrics {
 	[key: string]: {
 		totalTime: number;
@@ -8,18 +10,18 @@ interface PerformanceMetrics {
 
 const performanceMetrics: PerformanceMetrics = {};
 
-export function MonitorAsync(target: any, propertyKey: string, descriptor: PropertyDescriptor) {
+export function MonitorAsync(target: object, propertyKey: string, descriptor: PropertyDescriptor) {
 	const className = target.constructor.name;
 	const originalMethod = descriptor.value;
 
-	descriptor.value = async function (...args: any[]) {
-		const memoryBefore = (window.performance as any).memory?.usedJSHeapSize || 0;
+	descriptor.value = async function (...args: unknown[]) {
+		const memoryBefore = (window.performance as PerformanceWithMemory).memory?.usedJSHeapSize || 0;
 		const timeStart = performance.now();
 
 		const result = await originalMethod.apply(this, args);
 
 		const timeEnd = performance.now();
-		const memoryAfter = (window.performance as any).memory?.usedJSHeapSize || 0;
+		const memoryAfter = (window.performance as PerformanceWithMemory).memory?.usedJSHeapSize || 0;
 
 		const timeTaken = timeEnd - timeStart;
 		const memoryUsed = memoryAfter - memoryBefore;
@@ -44,18 +46,18 @@ export function MonitorAsync(target: any, propertyKey: string, descriptor: Prope
 	return descriptor;
 }
 
-export function Monitor(target: any, propertyKey: string, descriptor: PropertyDescriptor) {
+export function Monitor(target: object, propertyKey: string, descriptor: PropertyDescriptor) {
 	const className = target.constructor.name;
 	const originalMethod = descriptor.value;
 
-	descriptor.value = function (...args: any[]) {
-		const memoryBefore = (performance as any).memory?.usedJSHeapSize || 0;
+	descriptor.value = function (...args: unknown[]) {
+		const memoryBefore = (performance as PerformanceWithMemory).memory?.usedJSHeapSize || 0;
 		const timeStart = performance.now();
 
 		const result = originalMethod.apply(this, args);
 
 		const timeEnd = performance.now();
-		const memoryAfter = (performance as any).memory?.usedJSHeapSize || 0;
+		const memoryAfter = (performance as PerformanceWithMemory).memory?.usedJSHeapSize || 0;
 
 		const timeTaken = timeEnd - timeStart;
 		const memoryUsed = memoryAfter - memoryBefore;

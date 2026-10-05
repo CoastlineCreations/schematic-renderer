@@ -196,7 +196,8 @@ export class InsignRegionHighlight implements Highlight {
 	 */
 	private createLabel(position: THREE.Vector3): CSS2DObject | null {
 		// Get display name from metadata or use region ID
-		const displayName = this.entry.metadata?.["doc.label"] || this.regionId;
+		const label = this.entry.metadata?.["doc.label"];
+		const displayName = typeof label === "string" && label ? label : this.regionId;
 		const ioType = this.entry.metadata?.["io.type"];
 
 		// Create label HTML element
@@ -218,11 +219,11 @@ export class InsignRegionHighlight implements Highlight {
 		div.textContent = displayName;
 
 		// Create CSS2D object
-		const label = new CSS2DObject(div);
-		label.position.copy(position);
-		label.position.y += 1; // Offset above the box
+		const labelObject = new CSS2DObject(div);
+		labelObject.position.copy(position);
+		labelObject.position.y += 1; // Offset above the box
 
-		return label;
+		return labelObject;
 	}
 
 	/**

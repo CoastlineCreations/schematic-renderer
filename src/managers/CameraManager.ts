@@ -2,16 +2,14 @@
 import * as THREE from "three";
 import { EventEmitter } from "events";
 import { SchematicRenderer } from "../SchematicRenderer";
-import { CameraWrapper } from "./CameraWrapper";
+import { CameraWrapper, type CameraParameters, type CameraControl } from "./CameraWrapper";
 import { CameraPath } from "../camera/CameraPath";
 import { CircularCameraPath } from "../camera/CircularCameraPath";
 import { CameraPathManager } from "./CameraPathManager";
 import { EasingFunctions } from "../utils/EasingFunctions";
 import { RecordingManager, RecordingOptions } from "./RecordingManager";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-// @ts-ignore
-import { CreativeControls } from "three-creative-controls";
-import { FlyControls, FlyControlsOptions } from "./FlyControls";
+import { FlyControls, FlyControlsOptions, type FlyControlsKeybinds } from "./FlyControls";
 export interface CameraManagerOptions {
 	position?: [number, number, number]; // Initial camera position
 	defaultCameraPreset?: "perspective" | "isometric" | "perspective_fpv"; // Default camera preset to use
@@ -77,7 +75,7 @@ export class CameraManager extends EventEmitter {
 	private cameras: Map<string, CameraWrapper> = new Map();
 	public cameraOptions: CameraManagerOptions;
 	private activeCameraKey: string;
-	public controls: Map<string, any> = new Map();
+	public controls: Map<string, CameraControl> = new Map();
 	public activeControlKey: string;
 	private rendererDomElement: HTMLCanvasElement;
 	private animationRequestId: number | null = null;
@@ -108,7 +106,7 @@ export class CameraManager extends EventEmitter {
 				-Math.atan(1 / Math.sqrt(2)), // ~35.264° pitch for true isometric
 				(45 * Math.PI) / 180, // 45° yaw for isometric
 				0,
-			] as const,
+			] as THREE.Vector3Tuple,
 			controlType: "orbit" as const,
 			fov: 45, // FOV for orthographic camera
 			controlSettings: {
@@ -182,22 +180,18 @@ export class CameraManager extends EventEmitter {
 			] || CameraManager.CAMERA_PRESETS.perspective;
 		this.activeControlKey = `${defaultPresetName}-${defaultPreset.controlType}`;
 
-		if (options.defaultCameraPreset) {
-			console.log(`Switching to default camera preset: ${options.defaultCameraPreset}`);
-			this.activeCameraKey = options.defaultCameraPreset; // Set active camera before switch
-			this.switchCameraPreset(options.defaultCameraPreset);
-		}
+		this.activeCameraKey = defaultPresetName;
 		// Initialize cameras with presets
 		Object.entries(CameraManager.CAMERA_PRESETS).forEach(([name, preset]) => {
-			const cameraParams: any = {
-				position: options.position || preset.position,
+			const cameraParams: CameraParameters = {
+				position: options.position || [...preset.position],
 				size: preset.type === "orthographic" ? 20 : undefined, // Default ortho size
 				fov: preset.fov, // Pass FOV if defined
 			};
 
 			// Only add rotation if it exists in the preset
 			if ("rotation" in preset) {
-				cameraParams.rotation = preset.rotation;
+				cameraParams.rotation = [...preset.rotation];
 			}
 
 			const camera = this.createCamera(preset.type, cameraParams);
@@ -210,7 +204,7 @@ export class CameraManager extends EventEmitter {
 			if (controls && preset.controlSettings) {
 				Object.assign(controls, preset.controlSettings);
 
-				if (name === "isometric") {
+				if (name === "isometric" && controls instanceof OrbitControls) {
 					this.setupIsometricControls(controls);
 				}
 			}
@@ -233,6 +227,7 @@ export class CameraManager extends EventEmitter {
 
 		this.controls.forEach((control, key) => {
 			control.enabled = key === this.activeControlKey;
+			if (control instanceof FlyControls) control.setOverlayVisible(control.enabled);
 		});
 
 		this.cameraPathManager = new CameraPathManager(this.schematicRenderer, {
@@ -263,7 +258,7 @@ export class CameraManager extends EventEmitter {
 		}
 	}
 
-	private createCamera(type: CameraType, params: any): CameraWrapper {
+	private createCamera(type: CameraType, params: CameraParameters): CameraWrapper {
 		let camera: CameraWrapper;
 		if (type === "perspective") {
 			camera = new CameraWrapper(
@@ -284,7 +279,7 @@ export class CameraManager extends EventEmitter {
 	}
 
 	private getDefaultCameraPath(): { path: CameraPath; name: string } | null {
-		const paths = Array.from(this.cameraPathManager["paths"].entries());
+		const paths = Array.from(this.cameraPathManager.getPaths().entries());
 		if (paths.length > 0) {
 			return { path: paths[0][1], name: paths[0][0] };
 		}
@@ -326,6 +321,7 @@ export class CameraManager extends EventEmitter {
 			onComplete,
 		} = options;
 
+		const path = cameraPath;
 		const targetFrameMs = 1000 / targetFps;
 		this.stopAnimation();
 
@@ -346,11 +342,7 @@ export class CameraManager extends EventEmitter {
 				}
 
 				//set the camera to the start of the path
-				const {
-					position: startPosition,
-					rotation: startRotation,
-					target,
-				} = cameraPath!.getPoint(0);
+				const { position: startPosition, rotation: startRotation, target } = path.getPoint(0);
 				(this.activeCamera.position as THREE.Vector3).copy(startPosition);
 				(this.activeCamera.rotation as THREE.Euler).copy(startRotation);
 				if (lookAtTarget) {
@@ -361,7 +353,7 @@ export class CameraManager extends EventEmitter {
 					let t = frame / totalFrames;
 					t = easing(t);
 
-					const { position, rotation, target } = cameraPath!.getPoint(t);
+					const { position, rotation, target } = path.getPoint(t);
 					(this.activeCamera.position as THREE.Vector3).copy(position);
 
 					if (lookAtTarget) {
@@ -408,7 +400,7 @@ export class CameraManager extends EventEmitter {
 						resolve();
 					}
 				};
-				onStart && onStart();
+				onStart?.();
 				this.animationRequestId = requestAnimationFrame(animate);
 			});
 		} catch (error) {
@@ -442,6 +434,7 @@ export class CameraManager extends EventEmitter {
 			console.warn(`Preset ${presetName} not found`);
 			return;
 		}
+		if (this.flyControlsEnabled) this.disableFlyControls();
 
 		// Store previous camera state
 		const previousCameraKey = this.activeCameraKey;
@@ -458,6 +451,7 @@ export class CameraManager extends EventEmitter {
 		// Update control states
 		this.controls.forEach((control, key) => {
 			control.enabled = key === controlKey;
+			if (control instanceof FlyControls) control.setOverlayVisible(control.enabled);
 		});
 
 		this.activeControlKey = controlKey;
@@ -501,7 +495,10 @@ export class CameraManager extends EventEmitter {
 	}
 
 	// Methods to interact with CameraPathManager
-	public updatePathParameters(name: string, params: any): void {
+	public updatePathParameters(
+		name: string,
+		params: Parameters<CameraPath["updateParameters"]>[0]
+	): void {
 		this.cameraPathManager.updatePathParameters(name, params);
 	}
 
@@ -518,7 +515,7 @@ export class CameraManager extends EventEmitter {
 	}
 
 	// Control Management
-	private createControls(type: ControlType, camera: CameraWrapper): any {
+	private createControls(type: ControlType, camera: CameraWrapper): CameraControl | undefined {
 		return camera.createControls(type);
 	}
 
@@ -532,7 +529,7 @@ export class CameraManager extends EventEmitter {
 		// Create new controls
 		const camera = this.activeCamera;
 		const newControls = this.createControls(type, camera);
-		this.controls.set(type, newControls);
+		if (newControls) this.controls.set(type, newControls);
 		this.activeControlKey = type;
 
 		// Listen to control events
@@ -541,8 +538,8 @@ export class CameraManager extends EventEmitter {
 		}
 	}
 
-	private setupControlEvents(controls: any) {
-		controls.addEventListener("change", () => {
+	private setupControlEvents(controls: CameraControl) {
+		const onChange = () => {
 			// On-demand rendering: any camera-control change makes the scene dirty
 			// (covers drag/zoom/pan and keeps the loop alive through damping).
 			this.schematicRenderer.invalidate();
@@ -556,7 +553,12 @@ export class CameraManager extends EventEmitter {
 				property: "rotation",
 				value: (this.activeCamera.rotation as THREE.Euler).clone(),
 			});
-		});
+		};
+		if (controls instanceof OrbitControls) {
+			controls.addEventListener("change", onChange);
+		} else {
+			controls.on("change", onChange);
+		}
 	}
 
 	private setupIsometricControls(controls: OrbitControls): void {
@@ -584,14 +586,7 @@ export class CameraManager extends EventEmitter {
 		const controls = this.controls.get(this.activeControlKey);
 		if (!controls) return;
 
-		if (this.activeControlKey.includes("creative")) {
-			const speed = CameraManager.CAMERA_PRESETS.perspective_fpv.controlSettings?.movementSpeed;
-			if (speed) {
-				CreativeControls.update(controls, speed);
-			}
-		} else if (controls.update) {
-			controls.update(deltaTime);
-		}
+		controls.update(deltaTime);
 	}
 
 	// ===== FLY CONTROLS API =====
@@ -608,6 +603,7 @@ export class CameraManager extends EventEmitter {
 
 		// Create fly controls for the active camera
 		this.flyControls = new FlyControls(this.activeCamera.camera, this.rendererDomElement, options);
+		this.flyControls.enabled = this.flyControlsEnabled;
 
 		// Listen for lock/unlock events
 		this.flyControls.on("lock", () => {
@@ -626,6 +622,7 @@ export class CameraManager extends EventEmitter {
 		});
 
 		this.flyControls.on("change", () => {
+			this.schematicRenderer.invalidate();
 			this.emit("cameraMove", {
 				position: (this.activeCamera.position as THREE.Vector3).clone(),
 				rotation: (this.activeCamera.rotation as THREE.Euler).clone(),
@@ -651,6 +648,7 @@ export class CameraManager extends EventEmitter {
 		// Enable fly controls
 		this.flyControlsEnabled = true;
 		if (this.flyControls) {
+			this.flyControls.object = this.activeCamera.camera;
 			this.flyControls.enabled = true;
 			// Show the fly controls overlay (click to enter message)
 			this.flyControls.setOverlayVisible(true);
@@ -721,7 +719,7 @@ export class CameraManager extends EventEmitter {
 	public getFlyControlsSettings(): {
 		moveSpeed: number;
 		sprintMultiplier: number;
-		keybinds: any;
+		keybinds: FlyControlsKeybinds;
 	} | null {
 		if (!this.flyControls) return null;
 		return {
@@ -737,7 +735,7 @@ export class CameraManager extends EventEmitter {
 	public setFlyControlsSettings(settings: {
 		moveSpeed?: number;
 		sprintMultiplier?: number;
-		keybinds?: any;
+		keybinds?: Partial<FlyControlsKeybinds>;
 	}): void {
 		if (!this.flyControls) return;
 
@@ -752,9 +750,19 @@ export class CameraManager extends EventEmitter {
 		}
 	}
 
+	get activeCameraPreset(): string {
+		return this.activeCameraKey;
+	}
+
+	get activeControls(): CameraControl | undefined {
+		return this.controls.get(this.activeControlKey);
+	}
+
 	// Camera properties
 	get activeCamera(): CameraWrapper {
-		return this.cameras.get(this.activeCameraKey)!;
+		const camera = this.cameras.get(this.activeCameraKey);
+		if (!camera) throw new Error(`Camera preset "${this.activeCameraKey}" is not initialized`);
+		return camera;
 	}
 
 	updateAspectRatio(aspect: number) {
@@ -848,7 +856,6 @@ export class CameraManager extends EventEmitter {
 			if (controls) controls.enabled = true;
 			return;
 		}
-		// @ts-ignore
 
 		const { center, size } = bounds; // size is a Vector3 with x, y, z dimensions
 
@@ -866,7 +873,7 @@ export class CameraManager extends EventEmitter {
 
 		if (this.activeCamera.camera.type === "OrthographicCamera") {
 			// Check camera type directly
-			const result = this.calculateIsometricFraming(center, size, aspect, padding);
+			const result = this.calculateIsometricFraming(center, size);
 			targetPosition = result.position;
 			targetRotation = result.rotation;
 
@@ -969,7 +976,9 @@ export class CameraManager extends EventEmitter {
 
 			// Create the 8 corners of the WORLD SPACE AABB
 			const halfSize = objectSize.clone().multiplyScalar(0.5);
-			const center = this.schematicRenderer.schematicManager!.getSchematicsAveragePosition();
+			const center =
+				this.schematicRenderer.schematicManager?.getSchematicsAveragePosition() ??
+				new THREE.Vector3();
 
 			const corners = [
 				new THREE.Vector3(center.x - halfSize.x, center.y - halfSize.y, center.z - halfSize.z),
@@ -1271,7 +1280,7 @@ export class CameraManager extends EventEmitter {
 		let finalLookAtTarget: THREE.Vector3 = center;
 
 		if (this.activeCamera.camera.type === "OrthographicCamera") {
-			const result = this.calculateIsometricFraming(center, size, aspect, padding);
+			const result = this.calculateIsometricFraming(center, size);
 			finalTargetPosition = result.position;
 			finalTargetRotation = result.rotation;
 
@@ -1678,11 +1687,7 @@ export class CameraManager extends EventEmitter {
 	 */
 	private calculateIsometricFraming(
 		center: THREE.Vector3,
-		objectSize: THREE.Vector3,
-		// @ts-ignore aspect is used by calculateOrthographicSize called from focusOnSchematics
-		aspect: number,
-		// @ts-ignore padding is used by calculateOrthographicSize called from focusOnSchematics
-		padding: number
+		objectSize: THREE.Vector3
 	): { position: THREE.Vector3; rotation: THREE.Euler } {
 		const presetName = this.activeCameraKey; // Assume current active camera is isometric or similar ortho
 		const preset =
@@ -1732,7 +1737,6 @@ export class CameraManager extends EventEmitter {
 	): Promise<void> {
 		const {
 			duration = 2.0,
-			// @ts-ignore
 			padding = 0.08,
 			startFromCurrentPosition = true,
 			startOrbitAfterZoom = false,
@@ -1855,8 +1859,7 @@ export class CameraManager extends EventEmitter {
 			const elapsedTime = (performance.now() - this.autoOrbitStartTime) / 1000;
 			const t = (elapsedTime % this.autoOrbitDuration) / this.autoOrbitDuration;
 
-			// @ts-ignore
-			const { position, rotation, target } = defaultPath.path.getPoint(t);
+			const { position, target } = defaultPath.path.getPoint(t);
 
 			(this.activeCamera.position as THREE.Vector3).copy(position);
 			this.activeCamera.lookAt(target);
@@ -1959,8 +1962,8 @@ export class CameraManager extends EventEmitter {
 		const yawRad = (yawDegrees * Math.PI) / 180;
 
 		// Update the preset
-		const isometricPreset = CameraManager.CAMERA_PRESETS.isometric as any;
-		isometricPreset.rotation = [pitchRad, yawRad, 0];
+		const isometricPreset = CameraManager.CAMERA_PRESETS.isometric;
+		isometricPreset.rotation.splice(0, 3, pitchRad, yawRad, 0);
 
 		// If currently in isometric mode, apply the change
 		if (this.activeCameraKey === "isometric") {
@@ -2070,7 +2073,7 @@ export class CameraManager extends EventEmitter {
 	 * @param refocus - Whether to refocus on schematics (default true)
 	 */
 	public snapToAngle(angle: string, refocus: boolean = true): void {
-		const preset = (CameraManager.SNAP_ANGLES as any)[angle];
+		const preset = CameraManager.SNAP_ANGLES[angle as keyof typeof CameraManager.SNAP_ANGLES];
 		if (!preset) {
 			console.warn(`Unknown snap angle: ${angle}`);
 			return;

@@ -555,7 +555,15 @@ export class ComputeMeshBuilder {
 		chunkOrigin: [number, number, number],
 		_chunkId: string
 	): Promise<GPUChunkResult | null> {
-		if (!this.initialized || !this.computePipeline || !this.paletteData) {
+		if (
+			!this.initialized ||
+			!this.computePipeline ||
+			!this.paletteData ||
+			!this.bindGroupLayout ||
+			!this.paletteVertexBuffer ||
+			!this.paletteIndicesBuffer ||
+			!this.paletteMetadataBuffer
+		) {
 			console.warn("[ComputeMeshBuilder] Not ready to build chunk");
 			return null;
 		}
@@ -630,6 +638,11 @@ export class ComputeMeshBuilder {
 		// Create GPU buffers
 		const blockBuffer = this.gpuManager.createStorageBuffer(blockArray, "block-data");
 		const voxelBuffer = this.gpuManager.createStorageBuffer(voxelMap, "voxel-map");
+		if (!blockBuffer || !voxelBuffer) {
+			blockBuffer?.destroy();
+			voxelBuffer?.destroy();
+			return null;
+		}
 
 		// Output geometry buffer: 6 i32s per vertex
 		const outGeometryBuffer = device.createBuffer({
@@ -675,13 +688,13 @@ export class ComputeMeshBuilder {
 
 		// Create bind group
 		const bindGroup = device.createBindGroup({
-			layout: this.bindGroupLayout!,
+			layout: this.bindGroupLayout,
 			entries: [
-				{ binding: 0, resource: { buffer: blockBuffer! } },
-				{ binding: 1, resource: { buffer: voxelBuffer! } },
-				{ binding: 2, resource: { buffer: this.paletteVertexBuffer! } },
-				{ binding: 3, resource: { buffer: this.paletteIndicesBuffer! } },
-				{ binding: 4, resource: { buffer: this.paletteMetadataBuffer! } },
+				{ binding: 0, resource: { buffer: blockBuffer } },
+				{ binding: 1, resource: { buffer: voxelBuffer } },
+				{ binding: 2, resource: { buffer: this.paletteVertexBuffer } },
+				{ binding: 3, resource: { buffer: this.paletteIndicesBuffer } },
+				{ binding: 4, resource: { buffer: this.paletteMetadataBuffer } },
 				{ binding: 5, resource: { buffer: outGeometryBuffer } },
 				{ binding: 6, resource: { buffer: outIndicesBuffer } },
 				{ binding: 7, resource: { buffer: countersBuffer } },

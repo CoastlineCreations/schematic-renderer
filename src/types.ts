@@ -180,8 +180,13 @@ export interface PaletteBlockData {
 	category: keyof ChunkMeshes; // Pre-computed category
 }
 
+export interface PaletteEntry {
+	name: string;
+	properties?: Record<string, string>;
+}
+
 export interface PaletteCache {
-	palette: any[]; // Original palette data
+	palette: PaletteEntry[]; // Original palette data
 	blockData: PaletteBlockData[]; // Direct array access by palette index
 	globalMaterials: Material[]; // All unique materials across palette
 	isReady: boolean;

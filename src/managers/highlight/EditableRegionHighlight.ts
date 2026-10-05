@@ -32,7 +32,9 @@ export class EditableRegionHighlight implements Highlight, SelectableObject {
 	private color: number;
 	private opacity: number;
 
-	private schematicId?: string;
+	public readonly schematicId?: string;
+	public definitionMetadata?: Record<string, unknown>;
+	public originalRegionName?: string;
 	private filters: string[] = [];
 
 	constructor(
@@ -259,16 +261,16 @@ export class EditableRegionHighlight implements Highlight, SelectableObject {
 		if (this.handles.size === 0) return;
 
 		// X faces - offset by 0.5 to sit on the block face
-		this.handles.get("minX")!.position.set(min.x - center.x - 0.5, 0, 0);
-		this.handles.get("maxX")!.position.set(max.x + 1 - center.x - 0.5, 0, 0);
+		this.handles.get("minX")?.position.set(min.x - center.x - 0.5, 0, 0);
+		this.handles.get("maxX")?.position.set(max.x + 1 - center.x - 0.5, 0, 0);
 
 		// Y faces
-		this.handles.get("minY")!.position.set(0, min.y - center.y - 0.5, 0);
-		this.handles.get("maxY")!.position.set(0, max.y + 1 - center.y - 0.5, 0);
+		this.handles.get("minY")?.position.set(0, min.y - center.y - 0.5, 0);
+		this.handles.get("maxY")?.position.set(0, max.y + 1 - center.y - 0.5, 0);
 
 		// Z faces
-		this.handles.get("minZ")!.position.set(0, 0, min.z - center.z - 0.5);
-		this.handles.get("maxZ")!.position.set(0, 0, max.z + 1 - center.z - 0.5);
+		this.handles.get("minZ")?.position.set(0, 0, min.z - center.z - 0.5);
+		this.handles.get("maxZ")?.position.set(0, 0, max.z + 1 - center.z - 0.5);
 
 		// Reset scales
 		this.handles.forEach((h) => h.scale.set(1, 1, 1));
@@ -403,7 +405,7 @@ export class EditableRegionHighlight implements Highlight, SelectableObject {
 	 */
 	public getBoundingBoxes(): Array<{ min: THREE.Vector3; max: THREE.Vector3 }> {
 		const boxes = this.activeRegion.getBoxes();
-		return boxes.map((box: any) => ({
+		return boxes.map((box: { min: number[]; max: number[] }) => ({
 			min: new THREE.Vector3(box.min[0], box.min[1], box.min[2]),
 			max: new THREE.Vector3(box.max[0], box.max[1], box.max[2]),
 		}));
@@ -439,8 +441,7 @@ export class EditableRegionHighlight implements Highlight, SelectableObject {
 		return [...this.filters];
 	}
 
-	// @ts-ignore
-	public toDefinitionRegion(schematic?: SchematicWrapper): DefinitionRegionWrapper {
+	public toDefinitionRegion(_schematic?: SchematicWrapper): DefinitionRegionWrapper {
 		// activeRegion is already filtered, so just return a copy.
 		// The 'schematic' arg is preserved for API compatibility but not strictly needed if we trust activeRegion.
 		return this.activeRegion.copy();

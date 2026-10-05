@@ -54,9 +54,10 @@ export class RegionManager extends EventEmitter {
 		schematicId?: string,
 		options?: { color?: number; opacity?: number }
 	): EditableRegionHighlight {
-		if (this.regions.has(name)) {
+		const existingRegion = this.regions.get(name);
+		if (existingRegion) {
 			console.warn(`Region ${name} already exists, updating bounds.`);
-			const region = this.regions.get(name)!;
+			const region = existingRegion;
 			region.setBounds(
 				new THREE.Vector3(min.x, min.y, min.z),
 				new THREE.Vector3(max.x, max.y, max.z)
@@ -127,21 +128,7 @@ export class RegionManager extends EventEmitter {
 			// Default to translate mode for moving the whole region, since handles allow scaling
 			this.renderer.gizmoManager.setMode("translate");
 
-			// Force gizmo visibility and ensure it's on top
-			// Access private property safely
-			const gizmoManager = this.renderer.gizmoManager as any;
-			if (gizmoManager.transformControls) {
-				const controls = gizmoManager.transformControls;
-				controls.visible = true;
-				controls.enabled = true;
-				// Force depth test disable again to be sure
-				controls.depthTest = false;
-				controls.depthWrite = false;
-				controls.renderOrder = 999;
-
-				// Make sure we update the helper immediately
-				if (gizmoManager.update) gizmoManager.update();
-			}
+			this.renderer.gizmoManager.ensureVisible();
 		} else {
 			console.warn(`Region ${name} not found or GizmoManager not enabled.`);
 		}
@@ -169,9 +156,7 @@ export class RegionManager extends EventEmitter {
 	}
 
 	public getRegionsForSchematic(schematicId: string): EditableRegionHighlight[] {
-		return Array.from(this.regions.values()).filter(
-			(region) => (region as any).schematicId === schematicId
-		);
+		return Array.from(this.regions.values()).filter((region) => region.schematicId === schematicId);
 	}
 
 	/**
@@ -208,10 +193,8 @@ export class RegionManager extends EventEmitter {
 		const createdNames: string[] = [];
 
 		// Track which regions belong to this schematic
-		if (!this.definitionRegionNames.has(schematicId)) {
-			this.definitionRegionNames.set(schematicId, new Set());
-		}
-		const schematicRegions = this.definitionRegionNames.get(schematicId)!;
+		const schematicRegions = this.definitionRegionNames.get(schematicId) ?? new Set<string>();
+		this.definitionRegionNames.set(schematicId, schematicRegions);
 
 		for (const regionName of regionNames) {
 			try {
@@ -257,8 +240,8 @@ export class RegionManager extends EventEmitter {
 				if (boxes.length > 1) {
 					console.log(`[RegionManager] Region '${regionName}' has ${boxes.length} boxes.`);
 				} // Store metadata for reference
-				(region as any).definitionMetadata = metadata;
-				(region as any).originalRegionName = regionName;
+				region.definitionMetadata = metadata;
+				region.originalRegionName = regionName;
 
 				schematicRegions.add(scopedName);
 				createdNames.push(scopedName);

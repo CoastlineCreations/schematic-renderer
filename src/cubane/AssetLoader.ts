@@ -2,7 +2,7 @@ import * as THREE from "three";
 import JSZip from "jszip";
 import { AnimatedTextureManager } from "./AnimatedTextureManager";
 import { TintManager } from "./TintManager";
-import { BlockModel, BlockStateDefinition } from "./types";
+import { BlockModel, BlockStateDefinition, BlockTextureReference } from "./types";
 import { AtlasBuilder } from "./AtlasBuilder";
 import { ResourcePackManager } from "./ResourcePackManager";
 
@@ -297,7 +297,7 @@ export class AssetLoader {
 		}
 
 		// Special handling for liquid models with level information
-		if (modelPath.startsWith("block/water") || modelPath.startsWith("block/lava")) {
+		if (/^block\/(?:water|lava)(?:_level_\d+)?$/.test(modelPath)) {
 			const isWater = modelPath.startsWith("block/water");
 
 			// Extract level from model path if present
@@ -456,40 +456,25 @@ export class AssetLoader {
 	/**
 	 * Resolve a texture reference in a model
 	 */
-	public resolveTexture(textureRef: string, model: BlockModel): string {
+	public resolveTexture(textureRef: BlockTextureReference, model: BlockModel): string {
 		if (!textureRef || textureRef === "#missing") {
 			return "block/missing_texture";
 		}
 
-		// If not a reference, return as is (but handle namespace)
-		if (!textureRef.startsWith("#")) {
-			// Remove minecraft: prefix if present
-			return textureRef.replace("minecraft:", "");
-		}
-
-		// Handle reference resolution with depth limit
-		const MAX_DEPTH = 5;
-		let depth = 0;
-		let ref = textureRef;
-
-		while (ref.startsWith("#") && depth < MAX_DEPTH) {
-			if (!model.textures) {
-				console.warn(`Model has no textures defined for reference ${ref}.`);
+		// Packs may omit # for a symbolic key. Resolve both forms with cycle detection;
+		// never recurse through a model-controlled reference chain.
+		const seen = new Set<string>();
+		let reference = typeof textureRef === "string" ? textureRef : textureRef.sprite;
+		while (reference.startsWith("#") || model.textures?.[reference] !== undefined) {
+			const key = reference.startsWith("#") ? reference.slice(1) : reference;
+			if (seen.has(key) || model.textures?.[key] === undefined) {
 				return "block/missing_texture";
 			}
-
-			const key = ref.substring(1);
-			ref = model.textures[key] || ref;
-			depth++;
+			seen.add(key);
+			const value = model.textures[key];
+			reference = typeof value === "string" ? value : value.sprite;
 		}
-
-		if (depth >= MAX_DEPTH || ref.startsWith("#")) {
-			console.warn(`Texture reference exceeded maximum depth: ${textureRef}`);
-			return "block/missing_texture";
-		}
-
-		// Remove minecraft: prefix if present in the final resolved texture
-		return ref.replace("minecraft:", "");
+		return reference.replace(/^minecraft:/, "");
 	}
 
 	/** Advance animated textures; returns true if any frame flipped (needs redraw). */
@@ -624,11 +609,12 @@ export class AssetLoader {
 		if (this.colormapsLoaded) return;
 		this.colormapsLoaded = true;
 
-		const [grass, foliage] = await Promise.all([
+		const [grass, foliage, dryFoliage] = await Promise.all([
 			this.loadColormapImageData("colormap/grass"),
 			this.loadColormapImageData("colormap/foliage"),
+			this.loadColormapImageData("colormap/dry_foliage"),
 		]);
-		this.tintManager.setColormaps(grass, foliage);
+		this.tintManager.setColormaps(grass, foliage, dryFoliage);
 	}
 
 	private async loadColormapImageData(texturePath: string): Promise<ImageData | null> {
@@ -661,7 +647,10 @@ export class AssetLoader {
 	/**
 	 * Analyze PNG texture transparency by examining alpha channel data
 	 */
-	public analyzeTextureTransparency(texture: THREE.Texture): {
+	public analyzeTextureTransparency(
+		texture: THREE.Texture,
+		region?: { u: number; v: number; width: number; height: number }
+	): {
 		hasTransparency: boolean;
 		transparencyType: "opaque" | "cutout" | "blend";
 		averageAlpha: number;
@@ -686,11 +675,13 @@ export class AssetLoader {
 		}
 
 		const image = texture.image as HTMLImageElement;
-		canvas.width = image.width;
-		canvas.height = image.height;
-		ctx.drawImage(image, 0, 0);
+		const x = Math.round((region?.u ?? 0) * image.width);
+		const y = Math.round((region?.v ?? 0) * image.height);
+		canvas.width = Math.max(1, Math.round((region?.width ?? 1) * image.width));
+		canvas.height = Math.max(1, Math.round((region?.height ?? 1) * image.height));
 
 		try {
+			ctx.drawImage(image, x, y, canvas.width, canvas.height, 0, 0, canvas.width, canvas.height);
 			const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
 			const data = imageData.data;
 
@@ -730,7 +721,6 @@ export class AssetLoader {
 			const hasTransparency = transparentPixels > 0 || semiTransparentPixels > 0;
 
 			if (!hasTransparency) {
-				console.log(`Opaque texture detected`);
 				return {
 					hasTransparency: false,
 					transparencyType: "opaque",
@@ -742,37 +732,9 @@ export class AssetLoader {
 				};
 			}
 
-			// Better logic for determining transparency type
-			const semiTransparentRatio = semiTransparentPixels / totalPixels;
-			const transparentRatio = transparentPixels / totalPixels;
-
-			let transparencyType: "cutout" | "blend";
-
-			// If most pixels are either fully transparent or fully opaque, it's cutout
-			if (
-				semiTransparentRatio < 0.1 &&
-				(transparentRatio > 0.1 || opaquePixels > totalPixels * 0.5)
-			) {
-				transparencyType = "cutout";
-			} else {
-				transparencyType = "blend";
-			}
-
-			console.log(`Texture transparency analysis: ${transparencyType}`);
-			console.log(`  - Total pixels: ${totalPixels}`);
-			console.log(
-				`  - Transparent: ${transparentPixels} (${(transparentRatio * 100).toFixed(1)}%)`
-			);
-			console.log(
-				`  - Semi-transparent: ${semiTransparentPixels} (${(semiTransparentRatio * 100).toFixed(
-					1
-				)}%)`
-			);
-			console.log(
-				`  - Opaque: ${opaquePixels} (${((opaquePixels / totalPixels) * 100).toFixed(1)}%)`
-			);
-			console.log(`  - Average alpha: ${averageAlpha.toFixed(3)}`);
-			console.log(`  - Visible alpha: ${visibleAlpha.toFixed(3)}`);
+			// Any partial alpha needs blending; binary alpha belongs in the opaque
+			// pass with alpha testing so cutout surfaces still write depth.
+			const transparencyType = semiTransparentPixels > 0 ? "blend" : "cutout";
 
 			return {
 				hasTransparency: true,
@@ -827,6 +789,8 @@ export class AssetLoader {
 				isLiquid: options.isLiquid,
 				isWater: options.isWater,
 				isLava: options.isLava,
+				isFlowing: options.isFlowing,
+				forceAnimation: options.forceAnimation,
 				faceDirection: options.faceDirection,
 				alphaTest: options.alphaTest,
 				opacity: options.opacity,
@@ -921,11 +885,17 @@ export class AssetLoader {
 			usingAtlas = false;
 		}
 
-		// Create material
-		const materialOptions: any = {
+		// Inspect only this texture's atlas region: transparent neighbouring atlas
+		// entries must not send opaque blocks (such as logs) to the blend queue.
+		const alpha = this.analyzeTextureTransparency(texture, atlasUVData ?? undefined);
+		const inspected =
+			alpha.opaquePixelCount + alpha.transparentPixelCount + alpha.semiTransparentPixelCount > 0;
+		const materialOptions: THREE.MeshStandardMaterialParameters = {
 			map: texture,
-			transparent: options.transparent ?? true,
-			alphaTest: options.alphaTest ?? 0.01,
+			transparent:
+				options.transparent ??
+				((options.opacity ?? 1) < 1 || !inspected || alpha.transparencyType === "blend"),
+			alphaTest: options.alphaTest ?? (inspected && !alpha.hasTransparency ? 0 : 0.01),
 			side: THREE.FrontSide,
 		};
 

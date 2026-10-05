@@ -1,5 +1,10 @@
 # Schematic Renderer
 
+See [dependency and rendering upgrade notes](docs/performance-upgrade.md) for performance measurements, the Nucleation version pin, and compatibility details.
+
+For the sibling Nucleation fork, see [local build, integration and benchmark instructions](docs/nucleation-fork.md).
+
+**Native preview development:** [rendering features, example and integration guide](docs/rendering-parity.md). Run `bun run dev:preview` to open the Minecraft 26.2 sample.
 A powerful, high-performance 3D rendering library for Minecraft schematics (.schematic, .schem, .litematic), built with Three.js and Rust/WASM.
 
 ![Schematic Renderer Demo](./preview.gif)

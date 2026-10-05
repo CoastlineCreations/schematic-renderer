@@ -1,0 +1,33 @@
+Minecraft resource files used by the schematic preview
+
+Source: https://github.com/InventivetalentDev/minecraft-assets/tree/26.2/assets/minecraft
+Branch: 26.2
+Commit: 3f83767f2fd01c1c38754aa304a33ed43a2bce33
+Archive SHA-256: f1424b9225599bbbdeb3d59cfb2ad0c738979d033461ad1c318ba28615c8ebba
+Default player skin: assets/minecraft/textures/entity/player/wide/steve.png
+Default player skin SHA-256: 06628f9cef88520da742ab280a01677ce17c99717f964ed89ed791673121094c
+
+This reduced browser pack contains blockstates, block models, block textures,
+biome colormaps, and these targeted entity textures copied byte-for-byte from the
+Minecraft Java Edition 26.2-snapshot-1 client JAR:
+
+- assets/minecraft/textures/entity/chest/copper*.png (12 files)
+- assets/minecraft/textures/entity/decorated_pot/*.png (25 files)
+- assets/minecraft/textures/entity/shulker/shulker*.png (17 files)
+- assets/minecraft/textures/entity/banner/*.png (44 files)
+
+It excludes aggregate _all.json files and unrelated game assets to reduce
+download and parse cost.
+
+Minecraft 26.2 texture references that use `{ "sprite": "..." }` objects are
+normalized to their equivalent sprite strings for browser-renderer compatibility.
+This affects 163 references in 110 block model files and preserves the selected
+texture.
+
+The Schem-at preview runs with animated textures disabled. The 54 multi-frame
+block textures are therefore cropped to their first declared frame, and all 102
+unused animation metadata files are omitted. This avoids squashing full animation
+strips onto block faces while keeping idle GPU use low.
+
+Minecraft assets are property of Mojang Studios. This project is not affiliated
+with or endorsed by Mojang Studios or Microsoft.

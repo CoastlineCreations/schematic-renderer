@@ -442,10 +442,10 @@ export class SlicerOverlay {
 	 * so we start in the right position instead of overlapping.
 	 */
 	private syncToSidebarState(): void {
-		const sidebar = (this.renderer as any).sidebar;
+		const sidebar = this.renderer.sidebar;
 		if (!sidebar || typeof sidebar.isVisible !== "function") return;
 		const visible = sidebar.isVisible();
-		const opts = sidebar.options ?? sidebar.opts;
+		const opts = sidebar.getLayout();
 		if (!opts) return;
 		this.handleSidebarVisibilityChanged({
 			visible,
@@ -583,10 +583,11 @@ export class SlicerOverlay {
 			this.schematicPickerRow.style.display = schematics.length > 1 ? "flex" : "none";
 		}
 
+		const currentSchematic = this.currentSchematic;
 		const targetId =
 			preferredId ||
-			(this.currentSchematic && schematics.some((s) => s.name === this.currentSchematic!.name)
-				? this.currentSchematic.name
+			(currentSchematic && schematics.some((s) => s.name === currentSchematic.name)
+				? currentSchematic.name
 				: schematics[0]?.name);
 
 		if (targetId) {

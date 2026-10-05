@@ -1,16 +1,16 @@
 {
 	"name": "schematic-renderer",
-	"version": "1.6.1",
+	"version": "1.7.0",
 	"license": "AGPL-3.0-only",
-	"description": "A schematic renderer package for Minecraft schematics using Three.js",
+	"description": "A schematic renderer package for Minecraft schematics using Three.js. Forked from schematic-renderer",
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/Schem-at/schematic-renderer.git"
+		"url": "https://github.com/CoastlineCreations/schematic-renderer.git"
 	},
 	"bugs": {
-		"url": "https://github.com/Schem-at/schematic-renderer/issues"
+		"url": "https://github.com/CoastlineCreations/schematic-renderer/issues"
 	},
-	"homepage": "https://github.com/Schem-at/schematic-renderer#readme",
+	"homepage": "https://github.com/CoastlineCreations/schematic-renderer#readme",
 	"keywords": [
 		"minecraft",
 		"schematic",
@@ -29,9 +29,9 @@
 	"types": "dist/index.d.ts",
 	"exports": {
 		".": {
+			"types": "./dist/index.d.ts",
 			"import": "./dist/schematic-renderer.es.js",
-			"require": "./dist/schematic-renderer.umd.js",
-			"types": "./dist/index.d.ts"
+			"require": "./dist/schematic-renderer.umd.js"
 		}
 	},
 	"files": [
@@ -39,20 +39,26 @@
 	],
 	"scripts": {
 		"start": "vite",
-		"dev": "concurrently \"bun run watch-wasm\" \"bun run start\"",
-		"build": "tsc --project tsconfig.build.json && vite build",
+		"dev": "concurrently \"npm run watch-wasm\" \"npm run start\"",
+		"build": "vite build && tsc --project tsconfig.build.json",
 		"build-only": "vite build",
 		"test": "vitest",
 		"test:run": "vitest run",
 		"test:coverage": "vitest run --coverage",
 		"test:ui": "vitest --ui",
-		"lint": "eslint src/",
+		"lint": "eslint src/ --max-warnings 0",
 		"lint:fix": "eslint src/ --fix",
 		"format": "prettier --write \"src/**/*.ts\"",
 		"format:check": "prettier --check \"src/**/*.ts\"",
-		"typecheck": "tsc --noEmit",
+		"typecheck": "tsc --noEmit && tsc --project tsconfig.preview.json",
 		"prepare": "husky",
-		"watch-wasm": "node watch-wasm.js"
+		"watch-wasm": "node watch-wasm.js",
+		"dev:preview": "vite --open /preview.html",
+		"verify": "npm run format:check && npm run lint && npm run typecheck && npm run test:run && npm run test:proxy && npm run build && npm run test:browser",
+		"test:browser": "playwright test",
+		"test:proxy": "node --test test/proxy-server.test.cjs",
+		"nucleation:local": "node scripts/use-local-nucleation.mjs",
+		"benchmark:nucleation": "node --expose-gc scripts/benchmark-nucleation.mjs"
 	},
 	"lint-staged": {
 		"src/**/*.ts": [
@@ -64,60 +70,46 @@
 		]
 	},
 	"devDependencies": {
-		"@esbuild-plugins/node-globals-polyfill": "^0.2.3",
-		"@eslint/js": "^9.39.2",
-		"@originjs/vite-plugin-commonjs": "^1.0.3",
+		"@eslint/js": "^9.39.5",
+		"@playwright/test": "1.62.0",
 		"@types/d3": "^7.4.3",
-		"@types/gzip-js": "^0.3.5",
-		"@types/lodash": "^4.17.13",
-		"@types/node": "^24.10.1",
-		"@types/pako": "^2.0.3",
-		"@types/three": "^0.184.0",
-		"@typescript-eslint/eslint-plugin": "^8.53.0",
-		"@typescript-eslint/parser": "^8.53.0",
-		"@vitest/coverage-v8": "^4.0.17",
-		"@vitest/ui": "^4.0.13",
-		"@webgpu/types": "^0.1.66",
-		"ajv": "^8.17.1",
-		"cors-anywhere": "^0.4.4",
+		"@types/lodash": "^4.17.25",
+		"@types/node": "^24.19.1",
+		"@types/three": "^0.186.0",
+		"@typescript-eslint/eslint-plugin": "^8.71.1",
+		"@typescript-eslint/parser": "^8.71.1",
+		"@vitest/coverage-v8": "^4.1.11",
+		"@vitest/ui": "^4.1.11",
+		"@webgpu/types": "^0.1.74",
+		"chokidar": "^5.0.0",
+		"concurrently": "^8.2.2",
 		"d3": "^7.9.0",
-		"eslint": "^9.39.2",
+		"eslint": "^9.39.5",
 		"eslint-config-prettier": "^10.1.8",
-		"express": "^4.19.2",
-		"happy-dom": "^20.0.10",
+		"fs-extra": "^11.4.1",
+		"happy-dom": "^20.14.5",
 		"husky": "^9.1.7",
-		"lint-staged": "^16.2.7",
-		"prettier": "^3.7.4",
-		"request": "^2.88.2",
-		"typescript": "^5.4.5",
-		"typescript-eslint": "^8.53.0",
-		"vite": "^4.3.5",
-		"vite-plugin-dts": "^4.5.4",
-		"vite-plugin-node-polyfills": "^0.22.0",
-		"vitest": "^4.0.13"
+		"lint-staged": "^16.4.0",
+		"prettier": "^3.9.9",
+		"simplex-noise": "^4.0.3",
+		"typescript": "^5.9.3",
+		"typescript-eslint": "^8.71.1",
+		"vite": "^8.3.2",
+		"vitest": "^4.1.11"
 	},
 	"dependencies": {
 		"@ffmpeg/ffmpeg": "^0.12.15",
 		"@ffmpeg/util": "^0.12.2",
-		"chokidar": "^3.6.0",
-		"concurrently": "^8.2.2",
-		"deepmerge": "^4.3.1",
-		"fs-extra": "^11.2.0",
-		"gif.js.optimized": "^1.0.1",
-		"gzip-js": "^0.3.2",
-		"http-proxy-middleware": "^0.2.0",
-		"jszip": "^3.10.1",
+		"events": "^3.3.0",
+		"jszip": "^3.10.2",
 		"lil-gui": "^0.19.2",
-		"n8ao": "^1.10.0",
-		"nucleation": "^0.2.12",
-		"pako": "^2.1.0",
-		"postprocessing": "^6.35.4",
-		"simplex-noise": "^4.0.3",
-		"stats-js": "^1.0.1",
-		"three": "^0.184.0",
-		"three-creative-controls": "^1.0.1",
-		"vite-plugin-top-level-await": "^1.4.4",
-		"vite-plugin-wasm": "^3.3.0",
-		"webm-writer": "^1.0.0"
+		"lodash": "^4.18.1",
+		"n8ao": "^1.10.3",
+		"nucleation": "0.10.4",
+		"postprocessing": "^6.39.5",
+		"three": "^0.186.1"
+	},
+	"engines": {
+		"node": "^20.19.0 || >=22.12.0"
 	}
 }

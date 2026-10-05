@@ -5,26 +5,38 @@ import * as THREE from "three";
 // import { SMAAEffect } from "postprocessing";
 // import { N8AOPostPass } from "n8ao";
 // import { GammaCorrectionEffect } from "../effects/GammaCorrectionEffect";
+import type {
+	Effect,
+	EffectComposer as Composer,
+	EffectPass as PostEffectPass,
+	RenderPass as PostRenderPass,
+	SMAAEffect as PostSMAAEffect,
+	Pass,
+} from "postprocessing";
+import type { WebGPURenderer as GPUWebRenderer } from "three/webgpu";
+import type { Inspector as ThreeInspector } from "three/examples/jsm/inspector/Inspector.js";
+import type { N8AOPostPass as AmbientOcclusionPass } from "../types/n8ao";
+import type { GammaCorrectionEffect as GammaEffect } from "../effects/GammaCorrectionEffect";
+import type { TiltShiftPlaneEffect as TiltEffect } from "../effects/TiltShiftPlaneEffect";
 import { EventEmitter } from "events";
 import { SchematicRenderer } from "../SchematicRenderer";
 import { RGBELoader } from "three/examples/jsm/loaders/RGBELoader.js";
 import { getClampedPixelRatio } from "../utils/pixelRatio";
 
 // Dynamic imports for post-processing (loaded on-demand)
-let EffectComposer: any = null;
-let RenderPass: any = null;
-let EffectPass: any = null;
-let SMAAEffect: any = null;
-let N8AOPostPass: any = null;
-let GammaCorrectionEffect: any = null;
+let EffectComposer: typeof import("postprocessing").EffectComposer;
+let RenderPass: typeof import("postprocessing").RenderPass;
+let EffectPass: typeof import("postprocessing").EffectPass;
+let SMAAEffect: typeof import("postprocessing").SMAAEffect;
+let N8AOPostPass: typeof import("n8ao").N8AOPostPass;
+let GammaCorrectionEffect: typeof import("../effects/GammaCorrectionEffect").GammaCorrectionEffect;
 // Our own Scheimpflug tilt-shift effect. Lazy-loaded alongside postprocessing.
-let TiltShiftPlaneEffect: any = null;
+let TiltShiftPlaneEffect: typeof import("../effects/TiltShiftPlaneEffect").TiltShiftPlaneEffect;
 let postprocessingLoaded = false;
 
 async function loadPostProcessing() {
 	if (postprocessingLoaded) return;
 	const postprocessing = await import("postprocessing");
-	// @ts-ignore - n8ao doesn't have TypeScript definitions
 	const n8ao = await import("n8ao");
 	const gammaEffect = await import("../effects/GammaCorrectionEffect");
 
@@ -140,28 +152,36 @@ async function cacheHdri(url: string, data: ArrayBuffer): Promise<void> {
 }
 
 // WebGPU imports (conditional - loaded dynamically)
-let WebGPURenderer: any = null;
-// @ts-expect-error Reserved for future WebGPU post-processing support
-let _PostProcessing: any = null;
-let Inspector: any = null;
+let WebGPURenderer: typeof import("three/webgpu").WebGPURenderer;
+let Inspector: typeof import("three/examples/jsm/inspector/Inspector.js").Inspector;
 
 // Type for renderer that can be either WebGL or WebGPU
-type AnyRenderer = THREE.WebGLRenderer | any; // WebGPURenderer type
+export type AnyRenderer = THREE.WebGLRenderer | GPUWebRenderer;
+type ManagedEffect = Effect & { enabled?: boolean };
+type RenderEffect = ManagedEffect | Pass;
+interface ManagedEffects {
+	renderPass: PostRenderPass;
+	effectPass: PostEffectPass;
+	tiltShiftPass: PostEffectPass;
+	ssao: AmbientOcclusionPass;
+	gammaCorrection: GammaEffect & { enabled?: boolean };
+	smaa: PostSMAAEffect & { enabled?: boolean };
+	tiltShift: TiltEffect & { enabled?: boolean };
+}
 
 export class RenderManager {
 	private schematicRenderer: SchematicRenderer;
 	public renderer!: AnyRenderer;
-	private composer!: any | null; // EffectComposer type (loaded dynamically)
-	// @ts-expect-error Reserved for future WebGPU post-processing support
-	private _postProcessing: any = null;
-	private passes: Map<string, any> = new Map();
+	private composer: Composer | null = null;
+	private passes: Map<string, RenderEffect> = new Map();
 	private eventEmitter: EventEmitter;
-	private pmremGenerator!: THREE.PMREMGenerator;
+	private pmremGenerator: THREE.PMREMGenerator | null = null;
 	private isRendering: boolean = false;
 	private hdriPath: string | null = null;
 	private hdriBackgroundOnly: boolean = true;
 	private currentEnvMap: THREE.Texture | null = null;
 	private disposed: boolean = false;
+	private initializingRenderer = false;
 	private contextLost: boolean = false;
 	private initialSizeSet: boolean = false;
 
@@ -173,6 +193,17 @@ export class RenderManager {
 		return getClampedPixelRatio(this.schematicRenderer.options.maxPixelRatio);
 	}
 	private resizeTimeout: number | null = null;
+	private readonly resizeHandler = (): void => {
+		if (this.disposed) return;
+		if (this.resizeTimeout !== null) window.cancelAnimationFrame(this.resizeTimeout);
+		this.resizeTimeout = window.requestAnimationFrame(() => {
+			this.resizeTimeout = null;
+			if (!this.disposed) this.updateCanvasSize();
+		});
+	};
+	private readonly cameraChangedHandler = (event: { newCamera: string }): void => {
+		if (!this.disposed) this.handleCameraChange(event.newCamera);
+	};
 	// Render-and-blit mode: when the context supplies a shared WebGL renderer, this
 	// view renders into it and blits the result onto its own 2D canvas.
 	private usesSharedRenderer = false;
@@ -181,9 +212,7 @@ export class RenderManager {
 
 	// WebGPU state
 	private _isWebGPU: boolean = false;
-	// @ts-expect-error Reserved for future use
-	private _webgpuInitialized: boolean = false;
-	private inspector: any = null;
+	private inspector: ThreeInspector | null = null;
 
 	// HDRI backup for camera switching
 	private originalBackground: THREE.Texture | THREE.Color | null = null;
@@ -191,8 +220,8 @@ export class RenderManager {
 
 	// Alpha mode state
 	private _alphaMode: boolean = false;
-	private _opaqueComposer: any | null = null;
-	private _alphaComposer: any | null = null;
+	private _opaqueComposer: Composer | null = null;
+	private _alphaComposer: Composer | null = null;
 
 	// Background mode
 	private _backgroundMode: "hdri" | "solid" | "transparent" | "image" = "hdri";
@@ -244,12 +273,14 @@ export class RenderManager {
 	 * Async initialization - must be called after constructor
 	 */
 	public async initialize(): Promise<void> {
+		if (this.disposed) return;
 		const webgpuOptions = this.schematicRenderer.options.webgpuOptions;
 		const preferWebGPU = webgpuOptions?.preferWebGPU ?? false;
 		const forceWebGPU = webgpuOptions?.forceWebGPU ?? false;
 
 		if (preferWebGPU || forceWebGPU) {
 			const webgpuAvailable = await this.checkWebGPUSupport();
+			if (this.disposed) return;
 
 			if (webgpuAvailable || forceWebGPU) {
 				try {
@@ -260,6 +291,7 @@ export class RenderManager {
 						"color: #4caf50; font-weight: bold"
 					);
 				} catch (error) {
+					if (this.disposed) return;
 					console.warn(
 						"[RenderManager] WebGPU initialization failed, falling back to WebGL:",
 						error
@@ -274,6 +306,7 @@ export class RenderManager {
 			await this.initWebGLRenderer();
 		}
 
+		if (this.disposed) return;
 		this.setupEventListeners();
 		this.updateCanvasSize();
 
@@ -300,9 +333,7 @@ export class RenderManager {
 		}
 
 		// Listen for camera changes to handle HDRI switching
-		this.schematicRenderer.cameraManager.on("cameraChanged", (event) => {
-			this.handleCameraChange(event.newCamera);
-		});
+		this.schematicRenderer.cameraManager.on("cameraChanged", this.cameraChangedHandler);
 	}
 
 	/**
@@ -340,7 +371,7 @@ export class RenderManager {
 	/**
 	 * Get the Three.js Inspector (WebGPU only)
 	 */
-	public getInspector(): any {
+	public getInspector(): ThreeInspector | null {
 		return this.inspector;
 	}
 
@@ -355,8 +386,8 @@ export class RenderManager {
 
 		// Boost existing lights to compensate for no environment map
 		// SceneManager stores lights in a Map, access via getLight if available
-		if ((sceneManager as any).lights) {
-			const lights = (sceneManager as any).lights as Map<string, THREE.Light>;
+		{
+			const lights = sceneManager.getLights();
 			const ambientLight = lights.get("ambientLight") as THREE.AmbientLight;
 			if (ambientLight) {
 				ambientLight.intensity = 3.5; // Boost ambient significantly
@@ -418,8 +449,8 @@ export class RenderManager {
 	private async initWebGPURenderer(): Promise<void> {
 		// Dynamically import WebGPU modules
 		const webgpuModule = await import("three/webgpu");
+		if (this.disposed) return;
 		WebGPURenderer = webgpuModule.WebGPURenderer;
-		_PostProcessing = webgpuModule.PostProcessing;
 
 		// Try to import Inspector
 		try {
@@ -429,14 +460,23 @@ export class RenderManager {
 			console.warn("[RenderManager] Three.js Inspector not available:", e);
 		}
 
+		if (this.disposed) return;
 		this.renderer = new WebGPURenderer({
 			canvas: this.schematicRenderer.canvas,
 			antialias: true,
 			powerPreference: "high-performance",
 		});
 
-		// WebGPU requires async initialization
-		await this.renderer.init();
+		// A WebGPU init may allocate resources after dispose() was requested.
+		// Defer its final disposal until that asynchronous initialization settles.
+		this.initializingRenderer = true;
+		try {
+			await this.renderer.init();
+		} finally {
+			this.initializingRenderer = false;
+			if (this.disposed) this.renderer.dispose();
+		}
+		if (this.disposed) return;
 
 		if (this.initialSizeSet) {
 			const parent = this.schematicRenderer.canvas.parentElement;
@@ -464,18 +504,15 @@ export class RenderManager {
 		// For now, we'll skip the complex post-processing and use basic rendering
 		// The postprocessing library doesn't support WebGPU yet
 		this.composer = null;
-		this._webgpuInitialized = true;
 
-		this.renderer.resetState();
-
-		// Create PMREMGenerator for HDRI
-		this.pmremGenerator = new THREE.PMREMGenerator(this.renderer);
+		// HDRI/PMREMGenerator currently belongs to the WebGL rendering path.
 	}
 
 	/**
 	 * Initialize WebGL Renderer (original code)
 	 */
 	private async initWebGLRenderer(): Promise<void> {
+		if (this.disposed) return;
 		// Render-and-blit: if the context provides a shared WebGL renderer, use it
 		// instead of creating one per view, and make this view's visible canvas a 2D
 		// canvas we blit the GL output onto. Otherwise behave exactly as before.
@@ -509,6 +546,7 @@ export class RenderManager {
 		// this.renderer.resetState();
 
 		await this.initComposer();
+		if (this.disposed) return;
 		this.initDefaultPasses(this.schematicRenderer.options);
 	}
 
@@ -531,7 +569,9 @@ export class RenderManager {
 
 		// Lazy-load post-processing modules only when needed
 		await loadPostProcessing();
+		if (this.disposed) return;
 
+		if ("isWebGPURenderer" in this.renderer) return;
 		this.composer = new EffectComposer(this.renderer);
 		const renderPass = new RenderPass(
 			this.schematicRenderer.sceneManager.scene,
@@ -591,7 +631,7 @@ export class RenderManager {
 
 		const canvas = this.renderer.domElement;
 		canvas.removeEventListener("webglcontextlost", this.handleContextLost);
-		canvas.removeEventListener("webglcontextrestored", this.handleContextRestored);
+		canvas?.removeEventListener("webglcontextrestored", this.handleContextRestored);
 
 		// Only add context lost handlers for WebGL
 		if (!this._isWebGPU) {
@@ -601,7 +641,7 @@ export class RenderManager {
 	}
 
 	private isPMREMGeneratorDisposed(): boolean {
-		return !this.pmremGenerator || (this.pmremGenerator as any)._blurMaterial === null;
+		return this.pmremGenerator === null;
 	}
 
 	private loadHDRI(hdriPath: string, backgroundOnly: boolean): void {
@@ -658,14 +698,21 @@ export class RenderManager {
 		);
 	}
 
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	private applyHDRITexture(texture: any, backgroundOnly: boolean, hdriPath: string): void {
+	private applyHDRITexture(
+		texture: THREE.DataTexture,
+		backgroundOnly: boolean,
+		hdriPath: string
+	): void {
 		if (this.disposed) {
 			texture.dispose();
 			return;
 		}
 
-		if (this.isPMREMGeneratorDisposed()) {
+		if ("isWebGPURenderer" in this.renderer) {
+			texture.dispose();
+			return;
+		}
+		if (!this.pmremGenerator) {
 			this.pmremGenerator = new THREE.PMREMGenerator(this.renderer);
 		}
 
@@ -702,6 +749,7 @@ export class RenderManager {
 
 		texture.dispose();
 		this.pmremGenerator.dispose();
+		this.pmremGenerator = null;
 		this.eventEmitter.emit("hdriLoaded", { path: hdriPath });
 	}
 
@@ -737,14 +785,17 @@ export class RenderManager {
 
 		try {
 			await new Promise((resolve) => setTimeout(resolve, 300));
+			if (this.disposed) return;
 
 			this.contextLost = false;
 
 			await this.initWebGLRenderer();
+			if (this.disposed) return;
 			this.updateCanvasSize();
 
 			if (this.hdriPath) {
 				await new Promise((resolve) => setTimeout(resolve, 100));
+				if (this.disposed) return;
 				this.loadHDRI(this.hdriPath, this.hdriBackgroundOnly);
 			}
 
@@ -761,7 +812,7 @@ export class RenderManager {
 		}
 	};
 
-	private initDefaultPasses(options: any): void {
+	private initDefaultPasses(options: SchematicRenderer["options"]): void {
 		if (this._isWebGPU || !this.composer) return;
 
 		const postOpts = this.schematicRenderer.options.postProcessingOptions;
@@ -795,7 +846,7 @@ export class RenderManager {
 					this.schematicRenderer.cameraManager.activeCamera.camera,
 					width,
 					height
-				) as any;
+				);
 
 				n8aoPass.configuration.aoRadius = 1.0;
 				n8aoPass.configuration.distanceFalloff = 0.4;
@@ -810,7 +861,7 @@ export class RenderManager {
 			}
 		}
 
-		let effectPass: any = null;
+		let effectPass: PostEffectPass | null = null;
 		if (effects.length > 0) {
 			effectPass = new EffectPass(
 				this.schematicRenderer.cameraManager.activeCamera.camera,
@@ -837,18 +888,11 @@ export class RenderManager {
 	}
 
 	private setupEventListeners(): void {
-		window.addEventListener("resize", () => {
-			if (this.resizeTimeout) {
-				window.cancelAnimationFrame(this.resizeTimeout);
-			}
-			this.resizeTimeout = window.requestAnimationFrame(() => {
-				this.updateCanvasSize();
-				this.resizeTimeout = null;
-			});
-		});
+		window.addEventListener("resize", this.resizeHandler);
 	}
 
 	public updateCanvasSize(): void {
+		if (this.disposed) return;
 		const canvas = this.schematicRenderer.canvas;
 		const parent = canvas.parentElement;
 		if (!parent) return;
@@ -879,7 +923,7 @@ export class RenderManager {
 			camera.aspect = width / height;
 			camera.updateProjectionMatrix();
 
-			const ssaoPass = this.passes.get("ssao");
+			const ssaoPass = this.getEffect("ssao");
 			if (ssaoPass && ssaoPass.setSize) {
 				const dpr = this.renderer.getPixelRatio();
 				ssaoPass.setSize(width * dpr, height * dpr);
@@ -904,7 +948,7 @@ export class RenderManager {
 	}
 
 	public setGamma(value: number): void {
-		const gammaEffect = this.passes.get("gammaCorrection");
+		const gammaEffect = this.getEffect("gammaCorrection");
 		if (gammaEffect) {
 			gammaEffect.setGamma(value);
 		}
@@ -922,7 +966,7 @@ export class RenderManager {
 	private _pendingTiltShiftAmount: number | null = null;
 
 	public setTiltShiftAmount(amount: number): void {
-		const effect = this.passes.get("tiltShift");
+		const effect = this.getEffect("tiltShift");
 		if (!effect) {
 			this._pendingTiltShiftAmount = amount;
 			return;
@@ -939,7 +983,7 @@ export class RenderManager {
 	 */
 	private updateTiltShiftGizmo(): void {
 		if (!this.tiltShiftGizmo) return;
-		const effect = this.passes.get("tiltShift");
+		const effect = this.getEffect("tiltShift");
 		if (!effect?.uniforms) return;
 		const point = effect.uniforms.get("focusPoint")?.value as THREE.Vector3 | undefined;
 		const normal = effect.uniforms.get("focusNormal")?.value as THREE.Vector3 | undefined;
@@ -959,7 +1003,7 @@ export class RenderManager {
 	 * Used by the click-to-focus picker after a raycast hit.
 	 */
 	public setTiltShiftFocusPoint(point: THREE.Vector3): void {
-		const effect = this.passes.get("tiltShift");
+		const effect = this.getEffect("tiltShift");
 		effect?.setFocusPoint?.(point);
 		this.updateTiltShiftGizmo();
 	}
@@ -970,7 +1014,7 @@ export class RenderManager {
 	 * a non-zero value is what makes this different from regular DOF.
 	 */
 	public setTiltShiftTilt(pitchDeg: number, yawDeg: number): void {
-		const effect = this.passes.get("tiltShift");
+		const effect = this.getEffect("tiltShift");
 		effect?.setTiltAngles?.(pitchDeg, yawDeg);
 		this._pendingTiltPitch = pitchDeg;
 		this._pendingTiltYaw = yawDeg;
@@ -1060,7 +1104,7 @@ export class RenderManager {
 			first.group.getWorldPosition(p);
 			return p;
 		}
-		const cam = this.schematicRenderer.cameraManager?.activeCamera?.camera as any;
+		const cam = this.schematicRenderer.cameraManager?.activeCamera?.camera;
 		return (cam?.userData?.target as THREE.Vector3 | undefined) ?? new THREE.Vector3();
 	}
 
@@ -1073,8 +1117,8 @@ export class RenderManager {
 	 */
 	public setTiltShiftEnabled(enabled: boolean): void {
 		if (!this.composer || !TiltShiftPlaneEffect || !EffectPass) return;
-		let tiltPass = this.passes.get("tiltShiftPass");
-		const effectPass = this.passes.get("effectPass");
+		let tiltPass = this.getEffect("tiltShiftPass");
+		const effectPass = this.getEffect("effectPass");
 
 		if (enabled && !tiltPass) {
 			const amount = this._pendingTiltShiftAmount ?? 0.5;
@@ -1120,6 +1164,7 @@ export class RenderManager {
 	private async ensureTiltShiftGizmo(): Promise<void> {
 		if (this.tiltShiftGizmo) return;
 		const { TiltShiftGizmo } = await import("../effects/TiltShiftGizmo");
+		if (this.disposed) return;
 		const scene = this.schematicRenderer.sceneManager?.scene;
 		if (!scene) return;
 		this.tiltShiftGizmo = new TiltShiftGizmo(scene);
@@ -1132,7 +1177,7 @@ export class RenderManager {
 	 * Useful for auto-disabling on small schematics or performance optimization
 	 */
 	public setSSAOEnabled(enabled: boolean): void {
-		const ssaoPass = this.passes.get("ssao");
+		const ssaoPass = this.getEffect("ssao");
 		if (ssaoPass) {
 			ssaoPass.enabled = enabled;
 			if (!enabled) {
@@ -1145,7 +1190,7 @@ export class RenderManager {
 	 * Check if SSAO is currently enabled
 	 */
 	public isSSAOEnabled(): boolean {
-		const ssaoPass = this.passes.get("ssao");
+		const ssaoPass = this.getEffect("ssao");
 		return ssaoPass?.enabled ?? false;
 	}
 
@@ -1155,7 +1200,7 @@ export class RenderManager {
 		intensity?: number;
 		qualityMode?: "Performance" | "Low" | "Medium" | "High" | "Ultra";
 	}): void {
-		const ssaoEffect = this.passes.get("ssao");
+		const ssaoEffect = this.getEffect("ssao");
 		if (ssaoEffect && ssaoEffect.configuration) {
 			if (params.aoRadius !== undefined) {
 				ssaoEffect.configuration.aoRadius = params.aoRadius;
@@ -1214,7 +1259,7 @@ export class RenderManager {
 
 	public renderSingleFrameAndGetStats(): {
 		renderTimeMs: number;
-		rendererInfo: THREE.WebGLInfo | null;
+		rendererInfo: AnyRenderer["info"] | null;
 	} {
 		if (this.isRendering || this.contextLost || this.disposed) {
 			console.warn(
@@ -1235,7 +1280,7 @@ export class RenderManager {
 		}
 
 		// Skip context check for WebGPU
-		if (!this._isWebGPU) {
+		if (!("isWebGPURenderer" in renderer)) {
 			const gl = renderer.getContext();
 			if (!gl || gl.isContextLost()) {
 				console.warn("[RenderManager] Attempted to render with lost WebGL context for stats.");
@@ -1321,7 +1366,7 @@ export class RenderManager {
 			this.isRendering = true;
 
 			// Skip context check for WebGPU
-			if (!this._isWebGPU) {
+			if (!("isWebGPURenderer" in this.renderer)) {
 				const gl = this.renderer.getContext();
 				if (!gl || gl.isContextLost()) {
 					console.warn("Attempted to render with lost WebGL context");
@@ -1337,7 +1382,7 @@ export class RenderManager {
 				this.renderer.render(scene, camera);
 
 				// Resolve timestamp queries to prevent overflow (for Inspector)
-				if (this.renderer.resolveTimestampsAsync) {
+				if ("resolveTimestampsAsync" in this.renderer) {
 					this.renderer.resolveTimestampsAsync("render").catch(() => {
 						// Silently ignore - timestamps are optional for profiling
 					});
@@ -1391,24 +1436,24 @@ export class RenderManager {
 		camera.aspect = width / height;
 		camera.updateProjectionMatrix();
 
-		const ssaoPass = this.passes.get("ssao");
+		const ssaoPass = this.getEffect("ssao");
 		if (ssaoPass && ssaoPass.setSize) {
 			ssaoPass.setSize(width, height);
 		}
 	}
 
 	public updateCamera(camera: THREE.Camera): void {
-		const renderPass = this.passes.get("renderPass");
+		const renderPass = this.getEffect("renderPass");
 		if (renderPass) {
-			renderPass.camera = camera;
+			renderPass.mainCamera = camera;
 		}
 
-		const effectPass = this.passes.get("effectPass");
+		const effectPass = this.getEffect("effectPass");
 		if (effectPass) {
-			effectPass.camera = camera;
+			effectPass.mainCamera = camera;
 		}
 
-		const ssaoEffect = this.passes.get("ssao");
+		const ssaoEffect = this.getEffect("ssao");
 		if (ssaoEffect && ssaoEffect.camera) {
 			ssaoEffect.camera = camera;
 		}
@@ -1418,11 +1463,25 @@ export class RenderManager {
 		return this.renderer;
 	}
 
-	public getEffect(effectName: string): any {
+	public getEffect<K extends keyof ManagedEffects>(effectName: K): ManagedEffects[K] | undefined;
+	public getEffect(effectName: string): RenderEffect | undefined;
+	public getEffect(effectName: string): RenderEffect | undefined {
 		return this.passes.get(effectName);
 	}
 
+	/** Resize post-processing targets to match a recording or screenshot canvas. */
+	public setComposerSize(width: number, height: number): void {
+		this.composer?.setSize(width, height);
+	}
+
+	/** Capture a frame even when the normal render loop is paused for recording. */
+	public renderCaptureFrame(): void {
+		if (this.composer) this.composer.render();
+		else this.render();
+	}
+
 	public dispose(): void {
+		if (this.disposed) return;
 		this.disposed = true;
 		this.contextLost = true;
 
@@ -1431,19 +1490,24 @@ export class RenderManager {
 			this.resizeTimeout = null;
 		}
 
-		window.removeEventListener("resize", this.updateCanvasSize);
-		const canvas = this.renderer.domElement;
-		canvas.removeEventListener("webglcontextlost", this.handleContextLost);
-		canvas.removeEventListener("webglcontextrestored", this.handleContextRestored);
+		window.removeEventListener("resize", this.resizeHandler);
+		this.schematicRenderer.cameraManager.off("cameraChanged", this.cameraChangedHandler);
+		const canvas = this.renderer?.domElement;
+		canvas?.removeEventListener("webglcontextlost", this.handleContextLost);
+		canvas?.removeEventListener("webglcontextrestored", this.handleContextRestored);
 
 		this.passes.forEach((pass) => {
 			if (pass.dispose) pass.dispose();
 		});
 		this.passes.clear();
 
-		if (this.composer) {
-			this.composer.dispose();
+		for (const composer of new Set([this.composer, this._alphaComposer, this._opaqueComposer])) {
+			composer?.dispose();
 		}
+		this.composer = this._alphaComposer = this._opaqueComposer = null;
+		this._imageBackground?.dispose();
+		this.tiltShiftGizmo?.dispose();
+		this.tiltShiftGizmo = null;
 
 		if (this.pmremGenerator && !this.isPMREMGeneratorDisposed()) {
 			this.pmremGenerator.dispose();
@@ -1460,8 +1524,8 @@ export class RenderManager {
 
 		// Don't dispose a shared renderer — it's owned by the context and used by
 		// sibling views. The context disposes it.
-		if (!this.usesSharedRenderer) {
-			this.renderer.dispose();
+		if (!this.usesSharedRenderer && !this.initializingRenderer) {
+			this.renderer?.dispose();
 		}
 	}
 
@@ -1473,6 +1537,7 @@ export class RenderManager {
 	 * the alpha channel through the post-processing pipeline (gamma, SMAA, etc.).
 	 */
 	public async setAlphaMode(enabled: boolean): Promise<void> {
+		if (this.disposed) return;
 		if (this._alphaMode === enabled) return;
 		this._alphaMode = enabled;
 
@@ -1484,6 +1549,7 @@ export class RenderManager {
 
 			// Build fresh alpha composer
 			await loadPostProcessing();
+			if (this.disposed) return;
 			const glRenderer = this.renderer as THREE.WebGLRenderer;
 			const cam = this.schematicRenderer.cameraManager.activeCamera.camera;
 			const scene = this.schematicRenderer.sceneManager.scene;
@@ -1493,11 +1559,13 @@ export class RenderManager {
 			const renderPass = new RenderPass(scene, cam);
 			alphaComposer.addPass(renderPass);
 
-			const effects: any[] = [];
+			const effects: Effect[] = [];
 			effects.push(new GammaCorrectionEffect(gamma));
 			try {
 				effects.push(new SMAAEffect());
-			} catch (_) {}
+			} catch {
+				// Continue with the remaining effects when optional setup or cleanup fails.
+			}
 
 			if (effects.length > 0) {
 				const effectPass = new EffectPass(cam, ...effects);
@@ -1509,7 +1577,9 @@ export class RenderManager {
 			if (this._alphaComposer) {
 				try {
 					this._alphaComposer.dispose();
-				} catch (_) {}
+				} catch {
+					// Continue with the remaining effects when optional setup or cleanup fails.
+				}
 			}
 			this._alphaComposer = alphaComposer;
 			this.composer = alphaComposer;
@@ -1520,7 +1590,9 @@ export class RenderManager {
 			if (this._alphaComposer && this.composer === this._alphaComposer) {
 				try {
 					this._alphaComposer.dispose();
-				} catch (_) {}
+				} catch {
+					// Continue with the remaining effects when optional setup or cleanup fails.
+				}
 				this._alphaComposer = null;
 			}
 			if (this._opaqueComposer) {
@@ -1566,6 +1638,7 @@ export class RenderManager {
 		switch (mode) {
 			case "hdri":
 				await this.setAlphaMode(false);
+				if (this.disposed) return;
 				if (options.hdriPath) {
 					this.setupHDRIBackground(options.hdriPath, options.hdriBackgroundOnly ?? true);
 				}
@@ -1577,6 +1650,7 @@ export class RenderManager {
 
 			case "solid": {
 				await this.setAlphaMode(false);
+				if (this.disposed) return;
 				const color = new THREE.Color(options.color ?? 0x222222);
 				scene.background = color;
 				(this.renderer as THREE.WebGLRenderer).setClearColor(color, 1);
@@ -1585,12 +1659,14 @@ export class RenderManager {
 
 			case "transparent":
 				await this.setAlphaMode(true);
+				if (this.disposed) return;
 				scene.background = null;
 				scene.environment = null;
 				break;
 
 			case "image":
 				await this.setAlphaMode(false);
+				if (this.disposed) return;
 				if (options.imageTexture) {
 					if (this._imageBackground) this._imageBackground.dispose();
 					this._imageBackground = options.imageTexture;

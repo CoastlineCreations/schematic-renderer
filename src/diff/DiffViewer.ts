@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { SchematicRenderer } from "../SchematicRenderer";
 import { SchematicWrapper, initializeNucleationWasm } from "../nucleationExports";
 
@@ -94,6 +95,7 @@ interface Voxel {
 export class DiffViewer {
 	private colors: DiffViewerColors;
 	private maxOverlay: number;
+	private autoRotate: boolean;
 	private onStats?: (stats: DiffStats) => void;
 
 	private renderer: SchematicRenderer;
@@ -135,6 +137,7 @@ export class DiffViewer {
 	constructor(canvas: HTMLCanvasElement, options: DiffViewerOptions = {}) {
 		this.colors = { ...DEFAULT_COLORS, ...(options.colors ?? {}) };
 		this.maxOverlay = options.maxOverlay ?? 200_000;
+		this.autoRotate = options.autoRotate ?? true;
 		this.onStats = options.onStats;
 
 		// The renderer's defaultResourcePacks is a map of name -> loader callback.
@@ -163,7 +166,7 @@ export class DiffViewer {
 					resolveReady();
 				},
 			},
-		} as any);
+		});
 	}
 
 	private afterInit(): void {
@@ -172,9 +175,9 @@ export class DiffViewer {
 		if (gl && "localClippingEnabled" in gl) {
 			(gl as THREE.WebGLRenderer).localClippingEnabled = true;
 		}
-		const controls = (this.renderer.cameraManager as any)?.controls;
-		if (controls) {
-			controls.autoRotate = true;
+		const controls = this.renderer.cameraManager.activeControls;
+		if (controls instanceof OrbitControls) {
+			controls.autoRotate = this.autoRotate;
 			controls.autoRotateSpeed = 1.0;
 			controls.addEventListener?.("start", () => {
 				controls.autoRotate = false;
@@ -197,7 +200,7 @@ export class DiffViewer {
 		const after = new SchematicWrapper();
 		after.from_data(afterBytes);
 
-		const diff = (before as any).diff(after, preset, {});
+		const diff = before.diff(after, preset, {});
 		const addedSet = this.positionSet(diff.added());
 		const changedSet = this.positionSet(diff.changed());
 		const swappedSet = this.positionSet(diff.swapped());
@@ -225,8 +228,8 @@ export class DiffViewer {
 			else byState.unchanged.push({ x, y, z });
 		}
 
-		const distance = Number((diff as any).distance ?? 0);
-		const support = Number((diff as any).support ?? 0);
+		const distance = Number(diff.distance ?? 0);
+		const support = Number(diff.support ?? 0);
 
 		// Render the textured after build, then keep a clone of its wrapper alive
 		// for the renderer (loadSchematic consumes it). Free our local diff wrappers.
@@ -235,7 +238,7 @@ export class DiffViewer {
 		afterForRender.from_data(afterBytes);
 		await this.renderer.schematicManager?.loadSchematic("after", afterForRender);
 
-		const obj = this.renderer.schematicManager?.schematics?.get("after") as any;
+		const obj = this.renderer.schematicManager?.schematics?.get("after");
 		this.baseGroup = obj?.group ?? null;
 		if (obj?.getMeshes) {
 			try {
@@ -253,7 +256,7 @@ export class DiffViewer {
 
 		[before, after, diff].forEach((w) => {
 			try {
-				(w as any).free?.();
+				w.free();
 			} catch {
 				/* ignore */
 			}
@@ -282,7 +285,7 @@ export class DiffViewer {
 			set.add(entry[0] + "," + entry[1] + "," + entry[2]);
 		}
 		try {
-			(wrapper as any).free?.();
+			wrapper.free();
 		} catch {
 			/* ignore */
 		}
@@ -298,18 +301,20 @@ export class DiffViewer {
 			out.push({ x: entry[0], y: entry[1], z: entry[2] });
 		}
 		try {
-			(wrapper as any).free?.();
+			wrapper.free();
 		} catch {
 			/* ignore */
 		}
 		return out;
 	}
 
-	private paletteName(palette: any, index: number): string | null {
-		const entry = Array.isArray(palette) ? palette[index] : palette?.[index];
-		if (!entry) return null;
+	private paletteName(palette: unknown, index: number): string | null {
+		if (!palette || typeof palette !== "object") return null;
+		const entry: unknown = (palette as Record<number, unknown>)[index];
 		if (typeof entry === "string") return entry;
-		return entry.name ?? null;
+		if (entry && typeof entry === "object" && "name" in entry && typeof entry.name === "string")
+			return entry.name;
+		return null;
 	}
 
 	/** Build opaque shaded highlight cubes per change-state, parented to the build group. */
@@ -420,10 +425,10 @@ export class DiffViewer {
 		}
 
 		// Block (textured) materials live in the renderer's materialMap.
-		const map = (this.renderer as any).materialMap as Map<string, THREE.Material> | undefined;
+		const map = this.renderer.materialMap;
 		map?.forEach((m) => {
-			(m as any).clippingPlanes = planes;
-			(m as any).clipIntersection = false;
+			m.clippingPlanes = planes;
+			m.clipIntersection = false;
 			m.needsUpdate = true;
 		});
 		for (const m of this.overlayMaterials.values()) {
@@ -435,12 +440,11 @@ export class DiffViewer {
 	/** Apply view-mode + dim + progress to overlay/base opacity. */
 	private refreshOpacities(): void {
 		// Dim the textured base so tints pop (cutaway only).
-		const obj = this.renderer.schematicManager?.schematics?.get("after") as any;
+		const obj = this.renderer.schematicManager?.schematics?.get("after");
 		const baseOpacity = this.viewMode === "cutaway" && this.dimUnchanged ? 0.6 : 1.0;
 		if (obj) {
 			try {
 				obj.opacity = baseOpacity;
-				obj.setOpacity?.(baseOpacity);
 			} catch {
 				/* ignore */
 			}
@@ -515,7 +519,7 @@ export class DiffViewer {
 		if (mesh) mesh.visible = visible;
 		// "unchanged" toggles the textured base build.
 		if (state === "unchanged") {
-			const obj = this.renderer.schematicManager?.schematics?.get("after") as any;
+			const obj = this.renderer.schematicManager?.schematics?.get("after");
 			if (obj?.group) obj.group.visible = visible;
 		}
 	}
@@ -559,7 +563,7 @@ export class DiffViewer {
 		this.disposeOverlay();
 		this.geometry.dispose();
 		try {
-			(this.renderer as any).dispose?.();
+			this.renderer.dispose();
 		} catch {
 			/* ignore */
 		}

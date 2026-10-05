@@ -1,16 +1,10 @@
 import * as THREE from "three";
 import { SchematicObject } from "./SchematicObject";
-import { SchematicWrapper } from "nucleation"; // Adjust the import path
-import { WorldMeshBuilder } from "../WorldMeshBuilder"; // Adjust the import path
+import { SchematicWrapper } from "../nucleationExports";
 import { EventEmitter } from "events";
 import { SceneManager } from "./SceneManager"; // Adjust the import path
 import { SchematicRenderer } from "../SchematicRenderer";
-import {
-	MemoryLeakFix,
-	disposeGroup,
-	clearAllCaches,
-	forceGarbageCollection,
-} from "../utils/MemoryLeakFix";
+import { clearAllCaches, forceGarbageCollection } from "../utils/MemoryLeakFix";
 import { GeometryBufferPool } from "../GeometryBufferPool";
 import { performanceMonitor } from "../performance/PerformanceMonitor";
 interface LoadingProgress {
@@ -30,11 +24,10 @@ export class SchematicManager {
 	public schematics: Map<string, SchematicObject> = new Map();
 	public schematicRenderer: SchematicRenderer;
 	public eventEmitter: EventEmitter;
-	//@ts-ignore
-	private worldMeshBuilder: WorldMeshBuilder;
 	private options: SchematicManagerOptions;
 	private sceneManager: SceneManager;
 	private singleSchematicMode: boolean;
+	private disposed = false;
 
 	constructor(schematicRenderer: SchematicRenderer, options: SchematicManagerOptions = {}) {
 		this.schematicRenderer = schematicRenderer;
@@ -45,7 +38,6 @@ export class SchematicManager {
 		if (!this.schematicRenderer.worldMeshBuilder) {
 			throw new Error("WorldMeshBuilder is required.");
 		}
-		this.worldMeshBuilder = schematicRenderer.worldMeshBuilder as WorldMeshBuilder;
 		this.eventEmitter = schematicRenderer.eventEmitter;
 		this.sceneManager = schematicRenderer.sceneManager;
 		this.singleSchematicMode = options.singleSchematicMode || false;
@@ -72,19 +64,16 @@ export class SchematicManager {
 		});
 	}
 
-	private isSchematicWrapper(obj: any): obj is SchematicWrapper {
-		// Duck typing: check for SchematicWrapper-specific methods/properties
+	private isSchematicWrapper(obj: unknown): obj is SchematicWrapper {
+		if (!obj || typeof obj !== "object") return false;
+		const candidate = obj as Record<string, unknown>;
 		return (
-			obj &&
-			typeof obj === "object" &&
-			(typeof obj.to_schematic === "function" ||
-				typeof obj.from_data === "function" ||
-				typeof obj.get_block === "function" ||
-				typeof obj.set_block === "function" ||
-				(typeof obj.__wbg_ptr === "number" && obj.__wbg_ptr > 0) ||
-				(obj.constructor &&
-					obj.constructor.name &&
-					obj.constructor.name.includes("SchematicWrapper")))
+			typeof candidate.to_schematic === "function" ||
+			typeof candidate.from_data === "function" ||
+			typeof candidate.get_block === "function" ||
+			typeof candidate.set_block === "function" ||
+			(typeof candidate.__wbg_ptr === "number" && candidate.__wbg_ptr > 0) ||
+			(typeof obj.constructor === "function" && obj.constructor.name.includes("SchematicWrapper"))
 		);
 	}
 
@@ -103,9 +92,11 @@ export class SchematicManager {
 			onProgress?: (progress: LoadingProgress) => void;
 		}
 	): Promise<void> {
+		if (this.disposed) return;
 		if (this.singleSchematicMode) {
 			await this.removeAllSchematics();
 		}
+		if (this.disposed) return;
 
 		// Parsing stage - 20% of total progress
 		options?.onProgress?.({
@@ -196,7 +187,7 @@ export class SchematicManager {
 
 		// DON'T dispose WorldMeshBuilder here - it's shared and needed for future schematic builds
 		// Only invalidate its cache so new textures are used
-		this.worldMeshBuilder.invalidateCache();
+		this.schematicRenderer.worldMeshBuilder?.invalidateCache();
 
 		// Clear buffer pool
 		GeometryBufferPool.clear();
@@ -221,8 +212,10 @@ export class SchematicManager {
 		}
 	): Promise<void> {
 		for (const key in schematicDataMap) {
-			if (schematicDataMap.hasOwnProperty(key)) {
+			if (this.disposed) return;
+			if (Object.prototype.hasOwnProperty.call(schematicDataMap, key)) {
 				const arrayBuffer = await schematicDataMap[key]();
+				if (this.disposed) return;
 				const properties = propertiesMap ? propertiesMap[key] : undefined;
 				await this.loadSchematic(key, arrayBuffer, properties).then(() => {
 					this.sceneManager.schematicRenderer.options?.callbacks?.onSchematicLoaded?.(key);
@@ -396,72 +389,31 @@ export class SchematicManager {
 		}
 	}
 
-	public async removeSchematic(name: string) {
-		const schematicObject = this.schematics.get(name);
-		if (!schematicObject) return;
+	public async removeSchematic(name: string): Promise<void> {
+		const schematic = this.schematics.get(name);
+		if (!schematic) return;
+		this.schematics.delete(name);
+		this.schematicRenderer.regionManager?.removeDefinitionRegions(name);
+		// Removal must not wait for workers or asynchronous block-entity textures.
+		schematic.dispose();
+		this.schematicRenderer.invalidate();
+		this.eventEmitter.emit("schematicRemoved", { id: name });
+		if (this.isEmpty() && !this.disposed) this.schematicRenderer.uiManager?.showEmptyState();
+	}
 
-		console.log(`🗑️ Starting removal of schematic: ${name}`);
-		const startMemory = MemoryLeakFix.monitorMemory();
-
-		try {
-			// Remove definition regions associated with this schematic
-			if (this.schematicRenderer.regionManager) {
-				this.schematicRenderer.regionManager.removeDefinitionRegions(name);
-			}
-
-			// Remove from map first to prevent any new operations on this schematic
-			this.schematics.delete(name);
-
-			// Get meshes - if this fails, at least the schematic is removed from the map
-			const meshes = await schematicObject.getMeshes();
-			console.log("Before removal - scene children:", this.sceneManager.scene.children.length);
-			console.log("Meshes to remove:", meshes.length);
-
-			// Use the enhanced disposal method for comprehensive cleanup
-			disposeGroup(schematicObject.group);
-
-			// Additional cleanup for any remaining references
-			if (schematicObject.group.parent) {
-				schematicObject.group.parent.remove(schematicObject.group);
-			}
-
-			// On-demand rendering: the scene changed, redraw it.
-			this.schematicRenderer.invalidate();
-
-			// Remove from scene if still there
-			this.sceneManager.scene.remove(schematicObject.group);
-
-			// Clear any user data that might hold references
-			schematicObject.group.userData = {};
-
-			// Emit removal event
-			this.eventEmitter.emit("schematicRemoved", { id: name });
-
-			// Force garbage collection to help with memory cleanup
-			forceGarbageCollection();
-
-			// Log memory improvement
-			const endMemory = MemoryLeakFix.monitorMemory();
-			if (startMemory && endMemory) {
-				const memoryFreed = startMemory.used - endMemory.used;
-				console.log(
-					`💾 Memory freed: ${memoryFreed}MB (${startMemory.used}MB → ${endMemory.used}MB)`
-				);
-			}
-		} catch (error) {
-			console.error("Error removing schematic:", error);
-			// Don't re-add to map since we already have enhanced cleanup
-			// The disposal should have worked even if there was an error
-		}
-
-		console.log("After removal - scene children:", this.sceneManager.scene.children.length);
-
-		if (this.isEmpty() && this.schematicRenderer.uiManager) {
-			this.schematicRenderer.uiManager.showEmptyState();
-		}
+	public dispose(): void {
+		if (this.disposed) return;
+		this.disposed = true;
+		for (const schematic of this.schematics.values()) schematic.dispose();
+		this.schematics.clear();
 	}
 
 	addSchematic(schematic: SchematicObject): void {
+		if (this.disposed) {
+			schematic.dispose();
+			return;
+		}
+		this.schematics.get(schematic.id)?.dispose();
 		this.schematics.set(schematic.id, schematic);
 
 		// Auto-load definition regions from schematic metadata if enabled
@@ -470,10 +422,9 @@ export class SchematicManager {
 			// Defer loading to ensure schematic is fully initialized
 			// Use queueMicrotask for better performance than setTimeout
 			queueMicrotask(() => {
+				if (this.disposed || this.schematics.get(schematic.id) !== schematic) return;
 				try {
-					const regionNames = schematic.loadDefinitionRegions();
-					if (regionNames.length > 0) {
-					}
+					schematic.loadDefinitionRegions();
 				} catch (e) {
 					console.warn(
 						`[SchematicManager] Failed to auto-load definition regions for '${schematic.id}':`,

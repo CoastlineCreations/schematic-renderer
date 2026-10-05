@@ -1,27 +1,23 @@
-// Re-export nucleation types and classes to provide single WASM instance
-// This ensures all consumers use the same nucleation instance
-
-// Classes (which are also types)
-// @ts-ignore - nucleation classes
+// One native WASM instance, with compatibility facades for the renderer's public API.
 export {
 	SchematicWrapper,
-	SimulationOptionsWrapper,
-	MchprsWorldWrapper,
+	BlockStateWrapper,
 	SchematicBuilderWrapper,
+	DiffWrapper,
+} from "./nucleation/SchematicWrapper";
+export { SimulationOptionsWrapper, MchprsWorldWrapper } from "./nucleation/simulation";
+export { DefinitionRegionWrapper, BlockPosition, SortStrategyWrapper } from "./nucleation/regions";
+export {
 	TypedCircuitExecutorWrapper,
 	ExecutionModeWrapper,
-	BlockPosition,
 	IoLayoutBuilderWrapper,
 	IoTypeWrapper,
 	LayoutFunctionWrapper,
 	IoLayoutWrapper,
 	ValueWrapper,
 	OutputConditionWrapper,
-	DefinitionRegionWrapper,
 	CircuitBuilderWrapper,
 	StateModeConstants,
-	SortStrategyWrapper,
-} from "nucleation";
+} from "./nucleation/circuits";
 
-// @ts-ignore - WASM initializer
-export { default as initializeNucleationWasm } from "nucleation";
+export { initializeNucleationWasm } from "./nucleation/runtime";

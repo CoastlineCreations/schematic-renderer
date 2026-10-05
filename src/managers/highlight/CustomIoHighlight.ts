@@ -2,11 +2,12 @@
 import * as THREE from "three";
 import { Highlight } from "../highlight/Highlight";
 import { SchematicRenderer } from "../../SchematicRenderer";
+import type { SimulationManager } from "../SimulationManager";
 
 export class CustomIoHighlight implements Highlight {
 	private schematicRenderer: SchematicRenderer;
 	private markers: {
-		[key: string]: { mesh: THREE.Mesh; label: THREE.Sprite };
+		[key: string]: { mesh: THREE.Group; label: THREE.Sprite };
 	} = {};
 	private visible = true;
 
@@ -27,7 +28,9 @@ export class CustomIoHighlight implements Highlight {
 		this.updateMarkers(data.positions);
 	};
 
-	private onSimulationInitialized = (data: { state: any }) => {
+	private onSimulationInitialized = (data: {
+		state: ReturnType<SimulationManager["getState"]>;
+	}) => {
 		if (data.state && data.state.customIoPositions) {
 			this.updateMarkers(data.state.customIoPositions);
 		}
@@ -177,7 +180,7 @@ export class CustomIoHighlight implements Highlight {
 		this.schematicRenderer.sceneManager.scene.add(group);
 		this.schematicRenderer.sceneManager.scene.add(sprite);
 		this.markers[key] = {
-			mesh: group as any, // Store group as mesh
+			mesh: group,
 			label: sprite,
 		};
 	}
@@ -188,13 +191,14 @@ export class CustomIoHighlight implements Highlight {
 			this.schematicRenderer.sceneManager.scene.remove(this.markers[key].label);
 
 			// Dispose geometries and materials
-			const group = this.markers[key].mesh as any;
+			const group = this.markers[key].mesh;
 			if (group && group.children) {
-				group.children.forEach((child: any) => {
+				group.children.forEach((child) => {
+					if (!(child instanceof THREE.Mesh || child instanceof THREE.LineSegments)) return;
 					if (child.geometry) child.geometry.dispose();
 					if (child.material) {
 						if (Array.isArray(child.material)) {
-							child.material.forEach((m: any) => m.dispose());
+							child.material.forEach((m: THREE.Material) => m.dispose());
 						} else {
 							child.material.dispose();
 						}

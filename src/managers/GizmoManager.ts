@@ -1,6 +1,5 @@
 import * as THREE from "three";
-// @ts-ignore
-import { TransformControls } from "three/examples/jsm/controls/TransformControls";
+import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
 import { SchematicRenderer } from "../SchematicRenderer";
 import { SelectableObject } from "./SelectableObject";
 import { SchematicObject } from "./SchematicObject";
@@ -25,19 +24,11 @@ export class GizmoManager {
 			this.schematicRenderer.cameraManager.activeCamera.camera,
 			this.schematicRenderer.renderManager?.renderer.domElement
 		);
-		// Ensure it's on top of everything
-		(this.transformControls as any).depthTest = false;
-		(this.transformControls as any).depthWrite = false;
-		(this.transformControls as any).renderOrder = 999;
-		// TransformControls returns the gizmo helper from .getHelper(), not itself
-		// Adding TransformControls directly will cause "object not an instance of THREE.Object3D" error
-		const gizmoHelper = this.transformControls.getHelper?.() ?? this.transformControls;
-		if (gizmoHelper instanceof THREE.Object3D) {
-			this.schematicRenderer.sceneManager.scene.add(gizmoHelper);
-		}
+		this.configureHelper();
+		this.schematicRenderer.sceneManager.scene.add(this.transformControls.getHelper());
 
 		// Disable camera controls when transforming
-		this.transformControls.addEventListener("dragging-changed", (event: any) => {
+		this.transformControls.addEventListener("dragging-changed", (event) => {
 			const controls = this.schematicRenderer.cameraManager.controls.get("orbit");
 			if (controls) {
 				controls.enabled = !event.value;
@@ -69,7 +60,7 @@ export class GizmoManager {
 			}
 		});
 
-		this.transformControls.addEventListener("dragging-changed", (event: any) => {
+		this.transformControls.addEventListener("dragging-changed", (event) => {
 			const controls = this.schematicRenderer.cameraManager.controls.get("orbit");
 			console.log(controls);
 			if (controls) {
@@ -106,16 +97,15 @@ export class GizmoManager {
 			threeObject = object.group;
 		} else if (object instanceof THREE.Object3D) {
 			threeObject = object;
-		} else if ((object as any).group instanceof THREE.Object3D) {
+		} else if ("group" in object && object.group instanceof THREE.Object3D) {
 			// Handle objects that wrap a THREE.Group (like EditableRegionHighlight)
-			threeObject = (object as any).group;
+			threeObject = object.group;
 		}
 
 		if (threeObject) {
 			// Re-verify object existence in scene before attaching
 			if (!this.schematicRenderer.sceneManager.scene.getObjectById(threeObject.id)) {
 				// Special check: Regions are parented to Schematics, not Scene directly
-				// const isRegion = (object as any).id?.startsWith("region_");
 				let hasParent = false;
 				let p = threeObject.parent;
 				while (p) {
@@ -145,38 +135,13 @@ export class GizmoManager {
 			// If it's a region, default to translate because handles handle scaling
 			// Check both wrapper pattern (object.group exists) and direct object pattern
 			if (
-				((object as any).group && (object as any).id.startsWith("region_")) ||
-				((object as any).name && (object as any).name.startsWith("region_"))
+				(typeof object.id === "string" && object.id.startsWith("region_")) ||
+				threeObject.name.startsWith("region_")
 			) {
 				this.setMode("translate");
 			}
 
-			// Force visibility and update
-			this.transformControls.visible = true;
-			this.transformControls.enabled = true;
-
-			// Re-apply renderOrder and depthTest settings on attach
-			if (typeof this.transformControls.traverse === "function") {
-				this.transformControls.traverse((child: THREE.Object3D) => {
-					if ((child as any).material) {
-						(child as any).material.depthTest = false;
-						(child as any).material.depthWrite = false;
-					}
-					child.renderOrder = 999;
-				});
-			} else if (this.transformControls.children) {
-				// Fallback for direct children
-				this.transformControls.children.forEach((child: THREE.Object3D) => {
-					if ((child as any).material) {
-						(child as any).material.depthTest = false;
-						(child as any).material.depthWrite = false;
-					}
-					child.renderOrder = 999;
-				});
-			}
-
-			// Also set on the root just in case (though it's an Object3D)
-			(this.transformControls as any).renderOrder = 999;
+			this.ensureVisible();
 
 			// Reset size to default to ensure visibility
 			this.transformControls.setSize(1.0);
@@ -205,6 +170,26 @@ export class GizmoManager {
 		}
 	}
 
+	private configureHelper(): void {
+		this.transformControls.getHelper().traverse((child) => {
+			if (child instanceof THREE.Mesh || child instanceof THREE.Line) {
+				const materials = Array.isArray(child.material) ? child.material : [child.material];
+				for (const material of materials) {
+					material.depthTest = false;
+					material.depthWrite = false;
+				}
+			}
+			child.renderOrder = 999;
+		});
+	}
+
+	public ensureVisible(): void {
+		this.transformControls.getHelper().visible = true;
+		this.transformControls.enabled = true;
+		this.configureHelper();
+		this.transformControls.getHelper().updateMatrixWorld(true);
+	}
+
 	public setMode(mode: "translate" | "rotate" | "scale") {
 		this.transformControls.setMode(mode);
 	}
@@ -226,16 +211,15 @@ export class GizmoManager {
 			}
 			// Ensure visibility persists
 			if (this.transformControls.object) {
-				this.transformControls.visible = true;
-				(this.transformControls as any).depthTest = false;
+				this.transformControls.getHelper().visible = true;
 			}
-		} catch (error) {
+		} catch {
 			this.detach();
 		}
 	}
 
 	public dispose() {
-		this.schematicRenderer.sceneManager.scene.remove(this.transformControls);
+		this.schematicRenderer.sceneManager.scene.remove(this.transformControls.getHelper());
 		this.transformControls.dispose();
 
 		if (this.boundingBoxHelper) {

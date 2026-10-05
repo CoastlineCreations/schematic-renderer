@@ -91,25 +91,31 @@ export interface TiltShiftPlaneOptions {
 
 export class TiltShiftPlaneEffect extends Effect {
 	private camera: Camera;
+	private readonly planeUniforms: {
+		invViewProjection: Uniform<Matrix4>;
+		focusPoint: Uniform<Vector3>;
+		focusNormal: Uniform<Vector3>;
+		focusRange: Uniform<number>;
+		blurStrength: Uniform<number>;
+	};
 
 	constructor(camera: Camera, options: TiltShiftPlaneOptions = {}) {
+		const uniforms = {
+			invViewProjection: new Uniform(new Matrix4()),
+			focusPoint: new Uniform(options.focusPoint?.clone() ?? new Vector3()),
+			focusNormal: new Uniform((options.focusNormal?.clone() ?? new Vector3(0, 0, -1)).normalize()),
+			focusRange: new Uniform(options.focusRange ?? 2),
+			blurStrength: new Uniform(options.blurStrength ?? 0.01),
+		};
 		super("TiltShiftPlaneEffect", fragmentShader, {
 			// DEPTH: composer attaches the depth texture so we can read it.
 			// CONVOLUTION: forces the effect into its own pass (so the merged-
 			// pass varying-name collisions we hit earlier can't happen).
 			attributes: EffectAttribute.DEPTH | EffectAttribute.CONVOLUTION,
-			uniforms: new Map<string, Uniform<any>>([
-				["invViewProjection", new Uniform(new Matrix4())],
-				["focusPoint", new Uniform(options.focusPoint?.clone() ?? new Vector3())],
-				[
-					"focusNormal",
-					new Uniform((options.focusNormal?.clone() ?? new Vector3(0, 0, -1)).normalize()),
-				],
-				["focusRange", new Uniform(options.focusRange ?? 2)],
-				["blurStrength", new Uniform(options.blurStrength ?? 0.01)],
-			]),
+			uniforms: new Map<string, Uniform>(Object.entries(uniforms)),
 		});
 		this.camera = camera;
+		this.planeUniforms = uniforms;
 	}
 
 	/**
@@ -117,30 +123,26 @@ export class TiltShiftPlaneEffect extends Effect {
 	 * uses it to convert sampled depths into world positions.
 	 */
 	update(_renderer: unknown, _inputBuffer: unknown, _deltaTime: number): void {
-		const cam = this.camera as unknown as {
-			projectionMatrix: Matrix4;
-			matrixWorldInverse: Matrix4;
-			updateMatrixWorld: () => void;
-		};
+		const cam = this.camera;
 		cam.updateMatrixWorld();
-		const inv = this.uniforms.get("invViewProjection")!.value as Matrix4;
+		const inv = this.planeUniforms.invViewProjection.value;
 		inv.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse).invert();
 	}
 
 	public setFocusPoint(p: Vector3): void {
-		(this.uniforms.get("focusPoint")!.value as Vector3).copy(p);
+		this.planeUniforms.focusPoint.value.copy(p);
 	}
 
 	public setFocusNormal(n: Vector3): void {
-		(this.uniforms.get("focusNormal")!.value as Vector3).copy(n).normalize();
+		this.planeUniforms.focusNormal.value.copy(n).normalize();
 	}
 
 	public setFocusRange(r: number): void {
-		this.uniforms.get("focusRange")!.value = Math.max(0.001, r);
+		this.planeUniforms.focusRange.value = Math.max(0.001, r);
 	}
 
 	public setBlurStrength(s: number): void {
-		this.uniforms.get("blurStrength")!.value = Math.max(0, s);
+		this.planeUniforms.blurStrength.value = Math.max(0, s);
 	}
 
 	/**
@@ -150,12 +152,9 @@ export class TiltShiftPlaneEffect extends Effect {
 	 * actual Scheimpflug "tilt" that produces the diagonal focus plane.
 	 */
 	public setTiltAngles(pitchDeg: number, yawDeg: number): void {
-		const cam = this.camera as unknown as {
-			quaternion: { x: number; y: number; z: number; w: number };
-			updateMatrixWorld: () => void;
-		};
+		const cam = this.camera;
 		cam.updateMatrixWorld();
-		const q = (cam as any).quaternion;
+		const q = cam.quaternion;
 		const forward = new Vector3(0, 0, -1).applyQuaternion(q);
 		const right = new Vector3(1, 0, 0).applyQuaternion(q);
 		const up = new Vector3(0, 1, 0).applyQuaternion(q);

@@ -86,8 +86,12 @@ export class RenderSettingsPanel extends BasePanel {
 	private initializeSettingsFromRenderer(): void {
 		const cameraManager = this.renderer.cameraManager;
 		if (cameraManager) {
-			const activeCameraKey = (cameraManager as any).activeCameraKey;
-			if (["isometric", "perspective", "perspective_fpv"].includes(activeCameraKey)) {
+			const activeCameraKey = cameraManager.activeCameraPreset;
+			if (
+				activeCameraKey === "isometric" ||
+				activeCameraKey === "perspective" ||
+				activeCameraKey === "perspective_fpv"
+			) {
 				this.settings.cameraMode = activeCameraKey;
 			}
 

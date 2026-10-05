@@ -1,5 +1,6 @@
 // CapturePanel.ts - Panel for screenshot and recording
 
+import { CircularCameraPath } from "../../camera/CircularCameraPath";
 import { BasePanel, BasePanelOptions } from "./BasePanel";
 import {
 	UIColors,
@@ -196,8 +197,8 @@ export class CapturePanel extends BasePanel {
 		);
 
 		const path = this.renderer.cameraManager.cameraPathManager.getPath("circularPath");
-		const initialRadius = (path as any)?.getRadius?.() ?? 20;
-		const initialHeight = (path as any)?.getHeight?.() ?? 10;
+		const initialRadius = path instanceof CircularCameraPath ? path.getRadius() : 20;
+		const initialHeight = path instanceof CircularCameraPath ? path.getHeight() : 10;
 
 		const radiusSlider = createSlider(initialRadius, {
 			min: 5,
@@ -405,11 +406,9 @@ export class CapturePanel extends BasePanel {
 
 	private updatePathParameter(param: "radius" | "height", value: number): void {
 		const path = this.renderer.cameraManager.cameraPathManager.getPath("circularPath");
-		if (!path || typeof (path as any).updateParameters !== "function") return;
+		if (!(path instanceof CircularCameraPath)) return;
 
-		const params: any = {};
-		params[param] = value;
-		(path as any).updateParameters(params);
+		path.updateParameters({ [param]: value });
 
 		this.refreshPathVisualization();
 	}

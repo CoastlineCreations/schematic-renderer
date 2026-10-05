@@ -10,20 +10,12 @@ export class AnnotationHighlight implements Highlight {
 		[key: string]: { mesh: THREE.Mesh; label: THREE.Sprite };
 	} = {};
 	private annotationInput: HTMLDivElement;
-	// @ts-ignore
-	private raycaster: THREE.Raycaster;
-	// @ts-ignore
-	private mouse: THREE.Vector2;
-	// @ts-ignore
-	private hoverPosition: THREE.Vector3 | null = null;
 
 	constructor(schematicRenderer: SchematicRenderer) {
 		this.schematicRenderer = schematicRenderer;
 
 		this.schematicRenderer.eventEmitter.on("addAnnotation", this.onAddAnnotation);
 		this.annotationInput = document.createElement("div");
-		this.raycaster = new THREE.Raycaster();
-		this.mouse = new THREE.Vector2();
 		this.createAnnotationInput();
 	}
 
@@ -39,8 +31,7 @@ export class AnnotationHighlight implements Highlight {
 		this.schematicRenderer.eventEmitter.off("addAnnotation", this.onAddAnnotation);
 	}
 
-	// @ts-ignore
-	update(deltaTime: number) {
+	update(_deltaTime: number) {
 		this.updateAnnotationVisibility();
 	}
 

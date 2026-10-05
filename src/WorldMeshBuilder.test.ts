@@ -5,7 +5,7 @@ import * as THREE from "three";
 vi.mock("./wasm/minecraft_schematic_utils_bg.wasm", () => ({
 	default: "mock-utils-wasm",
 }));
-vi.mock("nucleation", () => ({
+vi.mock("./nucleationExports", () => ({
 	default: vi.fn().mockResolvedValue(undefined),
 	SchematicWrapper: class {},
 }));

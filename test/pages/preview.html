@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>Schematic preview</title>
+		<link rel="icon" href="data:," />
+		<style>
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				background: #10151d;
+				color: #eaf0f7;
+				font:
+					15px system-ui,
+					sans-serif;
+			}
+			main {
+				max-width: 1400px;
+				margin: auto;
+				padding: 24px;
+			}
+			h1 {
+				margin: 0 0 8px;
+				font-size: 28px;
+			}
+			p {
+				color: #aab8c9;
+			}
+			.toolbar {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 12px;
+				align-items: center;
+				margin: 20px 0;
+			}
+			button,
+			.file-label {
+				border: 1px solid #536375;
+				border-radius: 7px;
+				padding: 10px 14px;
+				background: #223145;
+				color: inherit;
+				font: inherit;
+				cursor: pointer;
+			}
+			button:disabled {
+				opacity: 0.5;
+				cursor: wait;
+			}
+			input {
+				max-width: 260px;
+			}
+			#viewport {
+				height: min(70vh, 800px);
+				min-height: 350px;
+				position: relative;
+				border-radius: 12px;
+				overflow: hidden;
+				background: #c1d6ff;
+			}
+			canvas {
+				display: block;
+				width: 100%;
+				height: 100%;
+				touch-action: none;
+			}
+			#status {
+				min-height: 24px;
+			}
+			a {
+				color: #b6d6ff;
+			}
+		</style>
+	</head>
+	<body>
+		<main>
+			<h1>Schematic preview</h1>
+			<p>
+				Open a schematic, inspect its blocks and save a preview. Drag to orbit, scroll to zoom,
+				right-drag to pan.
+			</p>
+			<div class="toolbar">
+				<label class="file-label"
+					>Open schematic <input id="file" type="file" accept=".schem,.schematic,.litematic,.nbt"
+				/></label>
+				<button id="sample" disabled>Rendering sample</button>
+				<button id="capture" disabled>Save image</button>
+				<button id="reopen" disabled>Reopen preview</button>
+			</div>
+			<p id="status" role="status" aria-live="polite">Loading Minecraft resources…</p>
+			<div id="viewport">
+				<canvas
+					id="preview"
+					aria-label="Interactive Minecraft schematic preview"
+					tabindex="0"
+				></canvas>
+			</div>
+			<p>
+				Minecraft 26.2 resources ·
+				<a href="/minecraft-26.2-resources-NOTICE.txt">Resource attribution</a> ·
+				<a href="/">All examples</a>
+			</p>
+		</main>
+		<script type="module" src="./scripts/preview.ts"></script>
+	</body>
+</html>

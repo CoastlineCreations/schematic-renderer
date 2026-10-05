@@ -2,7 +2,46 @@
 import { EventEmitter } from "events";
 import { SchematicRenderer } from "../SchematicRenderer";
 import { InsignRegionHighlight, InsignRegionStyle } from "./highlight/InsignRegionHighlight";
-import { DslMap, DslEntry } from "../types/insign";
+import { DslMap, DslEntry, BoxPair } from "../types/insign";
+
+function normalizeRecord(value: unknown): Record<string, unknown> | null {
+	if (value instanceof Map) return Object.fromEntries(value);
+	return value !== null && typeof value === "object" && !Array.isArray(value)
+		? (value as Record<string, unknown>)
+		: null;
+}
+
+function isBoxPair(value: unknown): value is BoxPair {
+	return (
+		Array.isArray(value) &&
+		value.length === 2 &&
+		value.every(
+			(point: unknown) =>
+				Array.isArray(point) &&
+				point.length === 3 &&
+				point.every((coordinate: unknown) => typeof coordinate === "number")
+		)
+	);
+}
+
+/** Normalize wasm-bindgen Maps at the boundary before exposing region data. */
+function normalizeInsignData(value: unknown): DslMap | null {
+	if (value == null) return null;
+	const regions = normalizeRecord(value);
+	if (!regions) throw new Error("Invalid Insign region data");
+	const result: DslMap = {};
+	for (const [id, rawEntry] of Object.entries(regions)) {
+		const entry = normalizeRecord(rawEntry);
+		if (!entry) throw new Error(`Invalid Insign entry: ${id}`);
+		const metadata = normalizeRecord(entry.metadata) ?? {};
+		const boxes = entry.bounding_boxes ?? undefined;
+		if (boxes !== undefined && (!Array.isArray(boxes) || !boxes.every(isBoxPair))) {
+			throw new Error(`Invalid Insign bounding boxes: ${id}`);
+		}
+		result[id] = { metadata, ...(boxes === undefined ? {} : { bounding_boxes: boxes }) };
+	}
+	return result;
+}
 
 export interface InsignRegionFilter {
 	/** Filter by metadata key-value pairs (e.g., { 'io.type': 'i' }) */
@@ -147,46 +186,11 @@ export class InsignManager extends EventEmitter {
 		try {
 			const compiledData = schematic.compileInsign();
 
-			// Handle both Map (from WASM) and plain objects
-			const hasData =
-				compiledData &&
-				(compiledData instanceof Map
-					? compiledData.size > 0
-					: Object.keys(compiledData).length > 0);
+			const data = normalizeInsignData(compiledData);
+			if (data && Object.keys(data).length > 0) {
+				this.insignData = data;
 
-			if (hasData) {
-				// Convert Map to plain object for easier use
-				if (compiledData instanceof Map) {
-					const obj: DslMap = {};
-					compiledData.forEach((value: any, key: string) => {
-						// Each value is also a Map, convert it too
-						if (value instanceof Map) {
-							const entry: any = {};
-							value.forEach((v: any, k: string) => {
-								// Recursively convert nested Maps (like metadata)
-								if (v instanceof Map) {
-									const nested: any = {};
-									v.forEach((nv: any, nk: string) => {
-										nested[nk] = nv;
-									});
-									entry[k] = nested;
-								} else {
-									entry[k] = v;
-								}
-							});
-							obj[key] = entry;
-						} else {
-							obj[key] = value;
-						}
-					});
-					this.insignData = obj;
-				} else {
-					this.insignData = compiledData;
-				}
-
-				console.log(
-					`[InsignManager] Loaded Insign data with ${Object.keys(this.insignData!).length} regions`
-				);
+				console.log(`[InsignManager] Loaded Insign data with ${Object.keys(data).length} regions`);
 				this.emit("dataLoaded", this.insignData);
 				return this.insignData;
 			} else {
@@ -226,9 +230,10 @@ export class InsignManager extends EventEmitter {
 		let regions = Object.entries(this.insignData).map(([id, entry]) => ({ id, entry }));
 
 		// Filter by metadata
-		if (filter.metadata) {
+		const metadata = filter.metadata;
+		if (metadata) {
 			regions = regions.filter(({ entry }) => {
-				return Object.entries(filter.metadata!).every(([key, value]) => {
+				return Object.entries(metadata).every(([key, value]) => {
 					return entry.metadata && entry.metadata[key] === value;
 				});
 			});
@@ -286,9 +291,10 @@ export class InsignManager extends EventEmitter {
 		}
 
 		// If already active, just update style
-		if (this.activeHighlights.has(regionId)) {
+		const activeHighlight = this.activeHighlights.get(regionId);
+		if (activeHighlight) {
 			if (style) {
-				this.activeHighlights.get(regionId)!.updateStyle(style);
+				activeHighlight.updateStyle(style);
 			}
 			return;
 		}

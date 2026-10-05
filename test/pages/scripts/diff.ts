@@ -1,6 +1,6 @@
 import { SchematicRenderer } from "../../../src/SchematicRenderer";
 import { SchematicRendererContext } from "../../../src/SchematicRendererContext";
-import { SchematicWrapper } from "nucleation";
+import { SchematicWrapper } from "../../../src/nucleationExports";
 
 // --- DOM helpers ---------------------------------------------------------
 const byId = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;

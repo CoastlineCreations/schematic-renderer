@@ -29,7 +29,10 @@ export interface HybridBlockDynamicPart {
 	// Optional: offset, rotation if the dynamic part needs fixed adjustment relative to the static model's origin
 	offset?: [number, number, number]; // In 0-1 block units
 	rotation?: [number, number, number]; // Euler angles in degrees [x, y, z]
-	// You might add more properties here if needed, e.g., scale
+	/** Include this part only for matching block states. */
+	when?: (block: Block) => boolean;
+	/** Configure state-dependent transforms after fixed offset/rotation are applied. */
+	configure?: (mesh: THREE.Object3D, block: Block) => void;
 }
 
 /**
@@ -93,11 +96,23 @@ export class Cubane {
 	private hybridBlockConfig: Record<string, HybridBlockDynamicPart[]> = {
 		"minecraft:lectern": [
 			{
-				entityType: "lectern_book", // This will map to a specific model in your EntityRenderer
-				// The lectern book is often placed based on the model's geometry,
-				// but an offset might be needed if your BookModel origin isn't perfectly aligned.
-				// Example (adjust these values based on your lectern and book models):
-				// offset: [0.5, 0.6875, 0.5], // Centered X/Z, Y based on lectern top height (11/16)
+				entityType: "lectern_book",
+				when: (block) => block.properties.has_book === "true",
+				configure: (mesh, block) => {
+					const facingAngles: Record<string, number> = {
+						north: 0,
+						east: -90,
+						south: 180,
+						west: 90,
+					};
+					mesh.position.set(0, 9 / 16, 0);
+					mesh.rotation.order = "YXZ";
+					mesh.rotation.set(
+						THREE.MathUtils.degToRad(67.5),
+						THREE.MathUtils.degToRad(facingAngles[block.properties.facing ?? "north"] ?? 0),
+						0
+					);
+				},
 			},
 		],
 		"minecraft:bell": [
@@ -836,6 +851,7 @@ export class Cubane {
 		if (this.hybridBlockConfig[blockId]) {
 			const dynamicPartsConfig = this.hybridBlockConfig[blockId];
 			for (const partConfig of dynamicPartsConfig) {
+				if (partConfig.when && !partConfig.when(block)) continue;
 				try {
 					const dynamicMesh = await this.getEntityMesh(partConfig.entityType, useCache);
 					if (dynamicMesh) {
@@ -857,6 +873,7 @@ export class Cubane {
 								THREE.MathUtils.degToRad(partConfig.rotation[2])
 							);
 						}
+						partConfig.configure?.(dynamicMesh, block);
 						dynamicMesh.userData.isDynamicBlockPart = true;
 						dynamicMesh.userData.entityType = partConfig.entityType;
 						rootGroup.add(dynamicMesh);
@@ -1095,6 +1112,7 @@ export class Cubane {
 			hasCullableFaces: faceData.cullableFaces.size > 0,
 			cullableFaces: faceData.cullableFaces,
 			nonCullableFaces: faceData.nonCullableFaces,
+			modelRotation: { x: primaryModel.x ?? 0, y: primaryModel.y ?? 0 },
 		};
 	}
 
@@ -1370,5 +1388,6 @@ export class Cubane {
 	public dispose(): void {
 		this.assetLoader.dispose();
 		this.clearMeshCaches();
+		this.entityRenderer.dispose();
 	}
 }

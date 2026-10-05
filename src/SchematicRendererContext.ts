@@ -5,11 +5,17 @@ import MeshBuilderWorker from "./workers/MeshBuilder.worker?worker&inline";
 import MeshBuilderWasmWorker from "./workers/MeshBuilderWasm.worker?worker&inline";
 import { getClampedPixelRatio } from "./utils/pixelRatio";
 
+interface ContextRegistryEntry {
+	promise: Promise<SchematicRendererContext>;
+	ctx?: SchematicRendererContext;
+	refs: number;
+}
+
 export interface SchematicRendererContextOptions {
 	/** Render unknown blocks as a purple placeholder (defaults to false). */
 	showUnknownBlocks?: boolean;
 	/** Passed through to the internal ResourcePackManager. */
-	resourcePackOptions?: any;
+	resourcePackOptions?: ConstructorParameters<typeof ResourcePackManager>[0];
 	/**
 	 * Render every attached view through ONE shared WebGL context (render-and-blit)
 	 * instead of one context per renderer. Bypasses the browser's ~8–16 context
@@ -46,6 +52,7 @@ export class SchematicRendererContext {
 
 	// Renderers attached to this context, so pack changes can invalidate them all.
 	private readonly renderers = new Set<{ invalidate(): void }>();
+	private disposed = false;
 
 	// Shared mesh-builder worker pool, created once and borrowed by every renderer's
 	// WorldMeshBuilder. The free-list/queue are shared so workers are lent exclusively;
@@ -59,6 +66,7 @@ export class SchematicRendererContext {
 	 * once per worker here instead of once per renderer.
 	 */
 	public getSharedWorkers(maxWorkers: number, useWasm: boolean): Worker[] {
+		if (this.disposed) throw new Error("SchematicRendererContext is disposed");
 		if (!this.sharedWorkers) {
 			this.sharedWorkers = [];
 			for (let i = 0; i < maxWorkers; i++) {
@@ -91,6 +99,7 @@ export class SchematicRendererContext {
 	 * drawn frame can be copied via drawImage.
 	 */
 	public getSharedGLRenderer(): THREE.WebGLRenderer | null {
+		if (this.disposed) throw new Error("SchematicRendererContext is disposed");
 		if (!this.useSharedRenderer) return null;
 		if (!this.sharedGLRenderer) {
 			const canvas = document.createElement("canvas");
@@ -115,43 +124,51 @@ export class SchematicRendererContext {
 		defaultResourcePacks: Record<string, DefaultPackCallback> = {},
 		options: SchematicRendererContextOptions = {}
 	): Promise<SchematicRendererContext> {
-		const cubane = new Cubane({ showUnknownBlocks: options.showUnknownBlocks });
+		// ResourcePackManager owns persistence and pack order; Cubane must not restore another cache.
+		const cubane = new Cubane({ autoRestore: false, showUnknownBlocks: options.showUnknownBlocks });
 		const resourcePackManager = new ResourcePackManager(options.resourcePackOptions);
-		await resourcePackManager.initPromise;
+		try {
+			await resourcePackManager.initPromise;
 
-		const blobs = await resourcePackManager.getResourcePackBlobs(defaultResourcePacks);
-		if (blobs.length > 0) {
-			// Batch mode → single atlas rebuild after all packs load.
-			cubane.beginPackBatchUpdate();
-			try {
-				for (let i = 0; i < blobs.length; i++) {
-					try {
-						await cubane.loadResourcePack(blobs[i] as Blob);
-					} catch (error) {
-						console.error(
-							`[SchematicRendererContext] Failed to load resource pack ${i + 1}:`,
-							error
-						);
+			const blobs = await resourcePackManager.getResourcePackBlobs(defaultResourcePacks);
+			if (blobs.length > 0) {
+				// Batch mode → single atlas rebuild after all packs load.
+				cubane.beginPackBatchUpdate();
+				try {
+					for (let i = 0; i < blobs.length; i++) {
+						try {
+							await cubane.loadResourcePack(blobs[i] as Blob);
+						} catch (error) {
+							console.error(
+								`[SchematicRendererContext] Failed to load resource pack ${i + 1}:`,
+								error
+							);
+						}
 					}
+				} finally {
+					await cubane.endPackBatchUpdate();
 				}
-			} finally {
-				await cubane.endPackBatchUpdate();
+			} else {
+				console.info(
+					"[SchematicRendererContext] No resource pack provided — blocks will render with placeholder textures."
+				);
 			}
-		} else {
-			console.info(
-				"[SchematicRendererContext] No resource pack provided — blocks will render with placeholder textures."
-			);
-		}
 
-		return new SchematicRendererContext(
-			cubane,
-			resourcePackManager,
-			options.sharedRenderer ?? false
-		);
+			return new SchematicRendererContext(
+				cubane,
+				resourcePackManager,
+				options.sharedRenderer ?? false
+			);
+		} catch (error) {
+			resourcePackManager.dispose();
+			cubane.dispose();
+			throw error;
+		}
 	}
 
 	/** Register a renderer so pack changes can invalidate it. */
 	public attachRenderer(renderer: { invalidate(): void }): void {
+		if (this.disposed) throw new Error("SchematicRendererContext is disposed");
 		this.renderers.add(renderer);
 	}
 
@@ -178,13 +195,12 @@ export class SchematicRendererContext {
 	 * the JS VM alive — the heavy pipeline (atlas, WASM, worker pool, GL context) is
 	 * reused across page views instead of rebuilt on every navigation.
 	 */
-	private static get registry(): Map<
-		string,
-		{ promise: Promise<SchematicRendererContext>; ctx?: SchematicRendererContext; refs: number }
-	> {
-		const g = globalThis as unknown as { __schematicRendererContexts?: Map<string, any> };
+	private static get registry(): Map<string, ContextRegistryEntry> {
+		const g = globalThis as unknown as {
+			__schematicRendererContexts?: Map<string, ContextRegistryEntry>;
+		};
 		if (!g.__schematicRendererContexts) g.__schematicRendererContexts = new Map();
-		return g.__schematicRendererContexts as Map<string, any>;
+		return g.__schematicRendererContexts;
 	}
 
 	/**
@@ -217,7 +233,7 @@ export class SchematicRendererContext {
 					created.ctx = ctx;
 				})
 				.catch(() => {
-					reg.delete(key); // failed build — let the next acquire retry
+					if (reg.get(key) === created) reg.delete(key); // Do not remove a newer acquisition.
 				});
 			entry = created;
 		}
@@ -242,13 +258,20 @@ export class SchematicRendererContext {
 		if (!entry) return;
 		entry.refs = Math.max(0, entry.refs - 1);
 		if (entry.refs === 0 && options.dispose) {
-			entry.ctx?.dispose();
 			reg.delete(key);
+			if (entry.ctx) entry.ctx.dispose();
+			else
+				void entry.promise.then(
+					(context) => context.dispose(),
+					() => {}
+				);
 		}
 	}
 
 	/** Dispose the shared pipeline. Call once all renderers have detached. */
 	public dispose(): void {
+		if (this.disposed) return;
+		this.disposed = true;
 		this.renderers.clear();
 		if (this.sharedWorkers) {
 			this.sharedWorkers.forEach((w) => w.terminate());
@@ -260,6 +283,7 @@ export class SchematicRendererContext {
 			this.sharedGLRenderer.dispose();
 			this.sharedGLRenderer = null;
 		}
+		this.resourcePackManager.dispose();
 		this.cubane.dispose();
 	}
 }

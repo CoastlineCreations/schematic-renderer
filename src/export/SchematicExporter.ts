@@ -53,20 +53,14 @@ const QUALITY_PRESETS: Record<ExportQuality, QualityPreset> = {
  * - Event system
  */
 export class SchematicExporter {
-	private eventListeners: Map<ExportEventType, Set<ExportEventHandler<any>>> = new Map();
+	private eventListeners: { [K in ExportEventType]: Set<ExportEventHandler<K>> } = {
+		exportStarted: new Set(),
+		exportProgress: new Set(),
+		exportComplete: new Set(),
+		exportError: new Set(),
+		exportCancelled: new Set(),
+	};
 	private currentExport: AbortController | null = null;
-
-	constructor() {
-		// Initialize event listener maps
-		const eventTypes: ExportEventType[] = [
-			"exportStarted",
-			"exportProgress",
-			"exportComplete",
-			"exportError",
-			"exportCancelled",
-		];
-		eventTypes.forEach((type) => this.eventListeners.set(type, new Set()));
-	}
 
 	/**
 	 * Export a THREE.Object3D to the specified format
@@ -79,7 +73,7 @@ export class SchematicExporter {
 		const resolvedOptions = this.resolveOptions(options);
 		const filename = this.getFilename(resolvedOptions);
 
-		this.emit("exportStarted", { format: resolvedOptions.format!, filename });
+		this.emit("exportStarted", { format: resolvedOptions.format, filename });
 
 		try {
 			// Phase 1: Preparing
@@ -164,7 +158,7 @@ export class SchematicExporter {
 	 * Subscribe to export events
 	 */
 	public on<T extends ExportEventType>(event: T, handler: ExportEventHandler<T>): () => void {
-		const handlers = this.eventListeners.get(event);
+		const handlers = this.eventListeners[event];
 		if (handlers) {
 			handlers.add(handler);
 		}
@@ -176,7 +170,7 @@ export class SchematicExporter {
 	 * Unsubscribe from export events
 	 */
 	public off<T extends ExportEventType>(event: T, handler: ExportEventHandler<T>): void {
-		const handlers = this.eventListeners.get(event);
+		const handlers = this.eventListeners[event];
 		if (handlers) {
 			handlers.delete(handler);
 		}
@@ -186,7 +180,7 @@ export class SchematicExporter {
 	 * Emit an event
 	 */
 	private emit<T extends ExportEventType>(event: T, data: ExportEventMap[T]): void {
-		const handlers = this.eventListeners.get(event);
+		const handlers = this.eventListeners[event];
 		if (handlers) {
 			handlers.forEach((handler) => handler(data));
 		}
@@ -544,8 +538,7 @@ export class SchematicExporter {
 
 		textureProps.forEach((prop) => {
 			const texture = (material as unknown as Record<string, unknown>)[prop] as
-				| THREE.Texture
-				| undefined;
+				THREE.Texture | undefined;
 			if (texture && texture.isTexture) {
 				texture.magFilter = THREE.NearestFilter;
 				texture.minFilter = THREE.NearestFilter;

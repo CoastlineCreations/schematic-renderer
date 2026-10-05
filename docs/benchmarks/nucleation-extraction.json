@@ -1,0 +1,265 @@
+{
+	"measuredAt": "2026-10-05T21:13:12.129Z",
+	"platform": "darwin",
+	"arch": "arm64",
+	"cpu": "Apple M4 Max",
+	"packageVersion": "0.10.24-local.51de345adce4",
+	"rustCompiler": "1.99.0",
+	"description": "Extraction only; same rebuilt0.10.24 engine, typed streaming versus JSON compatibility fallback; source fixture creation excluded.",
+	"cases": {
+		"dense": {
+			"node": "v24.19.0",
+			"side": 96,
+			"rounds": 3,
+			"layout": "dense",
+			"cells": 884736,
+			"blocks": 884736,
+			"checksum": 15679232,
+			"summaries": {
+				"typed": {
+					"firstChunkMs": 0.8322920000000522,
+					"fullScanMs": 28.903957999999875
+				},
+				"json": {
+					"firstChunkMs": 927.2946670000001,
+					"fullScanMs": 934.95525
+				}
+			},
+			"results": {
+				"typed": [
+					{
+						"firstChunkMs": 1.1007909999999868,
+						"fullScanMs": 35.599249999999984,
+						"blocks": 884736,
+						"chunks": 216,
+						"checksum": 15679232,
+						"bounds": {
+							"min": [-48, -48, -48],
+							"max": [47, 47, 47]
+						},
+						"reads": {
+							"typedCalls": 3456,
+							"typedBytes": 20127744,
+							"jsonCalls": 0,
+							"jsonCharacters": 0
+						}
+					},
+					{
+						"firstChunkMs": 0.6772080000000642,
+						"fullScanMs": 28.903957999999875,
+						"blocks": 884736,
+						"chunks": 216,
+						"checksum": 15679232,
+						"bounds": {
+							"min": [-48, -48, -48],
+							"max": [47, 47, 47]
+						},
+						"reads": {
+							"typedCalls": 3456,
+							"typedBytes": 20127744,
+							"jsonCalls": 0,
+							"jsonCharacters": 0
+						}
+					},
+					{
+						"firstChunkMs": 0.8322920000000522,
+						"fullScanMs": 27.97208300000011,
+						"blocks": 884736,
+						"chunks": 216,
+						"checksum": 15679232,
+						"bounds": {
+							"min": [-48, -48, -48],
+							"max": [47, 47, 47]
+						},
+						"reads": {
+							"typedCalls": 3456,
+							"typedBytes": 20127744,
+							"jsonCalls": 0,
+							"jsonCharacters": 0
+						}
+					}
+				],
+				"json": [
+					{
+						"firstChunkMs": 933.6745839999999,
+						"fullScanMs": 942.509,
+						"blocks": 884736,
+						"chunks": 216,
+						"checksum": 15679232,
+						"bounds": {
+							"min": [-48, -48, -48],
+							"max": [47, 47, 47]
+						},
+						"reads": {
+							"typedCalls": 0,
+							"typedBytes": 0,
+							"jsonCalls": 216,
+							"jsonCharacters": 57673944
+						}
+					},
+					{
+						"firstChunkMs": 905.4856669999999,
+						"fullScanMs": 913.586875,
+						"blocks": 884736,
+						"chunks": 216,
+						"checksum": 15679232,
+						"bounds": {
+							"min": [-48, -48, -48],
+							"max": [47, 47, 47]
+						},
+						"reads": {
+							"typedCalls": 0,
+							"typedBytes": 0,
+							"jsonCalls": 216,
+							"jsonCharacters": 57673944
+						}
+					},
+					{
+						"firstChunkMs": 927.2946670000001,
+						"fullScanMs": 934.95525,
+						"blocks": 884736,
+						"chunks": 216,
+						"checksum": 15679232,
+						"bounds": {
+							"min": [-48, -48, -48],
+							"max": [47, 47, 47]
+						},
+						"reads": {
+							"typedCalls": 0,
+							"typedBytes": 0,
+							"jsonCalls": 216,
+							"jsonCharacters": 57673944
+						}
+					}
+				]
+			}
+		},
+		"sparse": {
+			"node": "v24.19.0",
+			"side": 96,
+			"rounds": 3,
+			"layout": "sparse",
+			"cells": 884736,
+			"blocks": 1729,
+			"checksum": 818293947,
+			"summaries": {
+				"typed": {
+					"firstChunkMs": 0.5358340000000226,
+					"fullScanMs": 18.899415999999974
+				},
+				"json": {
+					"firstChunkMs": 802.7189579999999,
+					"fullScanMs": 802.8272079999999
+				}
+			},
+			"results": {
+				"typed": [
+					{
+						"firstChunkMs": 0.6776669999999854,
+						"fullScanMs": 26.211833000000013,
+						"blocks": 1729,
+						"chunks": 216,
+						"checksum": 818293947,
+						"bounds": {
+							"min": [-48, -48, -48],
+							"max": [47, 47, 47]
+						},
+						"reads": {
+							"typedCalls": 3456,
+							"typedBytes": 20127744,
+							"jsonCalls": 0,
+							"jsonCharacters": 0
+						}
+					},
+					{
+						"firstChunkMs": 0.47454100000004473,
+						"fullScanMs": 18.899415999999974,
+						"blocks": 1729,
+						"chunks": 216,
+						"checksum": 818293947,
+						"bounds": {
+							"min": [-48, -48, -48],
+							"max": [47, 47, 47]
+						},
+						"reads": {
+							"typedCalls": 3456,
+							"typedBytes": 20127744,
+							"jsonCalls": 0,
+							"jsonCharacters": 0
+						}
+					},
+					{
+						"firstChunkMs": 0.5358340000000226,
+						"fullScanMs": 17.646209,
+						"blocks": 1729,
+						"chunks": 216,
+						"checksum": 818293947,
+						"bounds": {
+							"min": [-48, -48, -48],
+							"max": [47, 47, 47]
+						},
+						"reads": {
+							"typedCalls": 3456,
+							"typedBytes": 20127744,
+							"jsonCalls": 0,
+							"jsonCharacters": 0
+						}
+					}
+				],
+				"json": [
+					{
+						"firstChunkMs": 816.662292,
+						"fullScanMs": 816.783083,
+						"blocks": 1729,
+						"chunks": 216,
+						"checksum": 818293947,
+						"bounds": {
+							"min": [-48, -48, -48],
+							"max": [47, 47, 47]
+						},
+						"reads": {
+							"typedCalls": 0,
+							"typedBytes": 0,
+							"jsonCalls": 216,
+							"jsonCharacters": 55723034
+						}
+					},
+					{
+						"firstChunkMs": 802.7189579999999,
+						"fullScanMs": 802.8272079999999,
+						"blocks": 1729,
+						"chunks": 216,
+						"checksum": 818293947,
+						"bounds": {
+							"min": [-48, -48, -48],
+							"max": [47, 47, 47]
+						},
+						"reads": {
+							"typedCalls": 0,
+							"typedBytes": 0,
+							"jsonCalls": 216,
+							"jsonCharacters": 55723034
+						}
+					},
+					{
+						"firstChunkMs": 784.0391669999999,
+						"fullScanMs": 784.14975,
+						"blocks": 1729,
+						"chunks": 216,
+						"checksum": 818293947,
+						"bounds": {
+							"min": [-48, -48, -48],
+							"max": [47, 47, 47]
+						},
+						"reads": {
+							"typedCalls": 0,
+							"typedBytes": 0,
+							"jsonCalls": 216,
+							"jsonCharacters": 55723034
+						}
+					}
+				]
+			}
+		}
+	}
+}

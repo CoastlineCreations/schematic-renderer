@@ -1,4 +1,4 @@
-import initializeNucleationWasm from "nucleation";
+import { initializeNucleationWasm } from "./nucleationExports";
 
 import * as THREE from "three";
 import { CameraManager } from "./managers/CameraManager";
@@ -11,7 +11,6 @@ import { shouldRenderFrame, pickFrameSchedule, scheduleDelayMs } from "./utils/r
 import { RenderLoopScheduler } from "./utils/renderLoopScheduler";
 import { SchematicManager, SchematicManagerOptions } from "./managers/SchematicManager";
 import { WorldMeshBuilder } from "./WorldMeshBuilder";
-import { MaterialRegistry } from "./MaterialRegistry";
 import { EventEmitter } from "events";
 import { ResourcePackManager, DefaultPackCallback } from "./managers/ResourcePackManager";
 import { ResourcePackManagerProxy } from "./managers/ResourcePackManagerProxy";
@@ -39,8 +38,7 @@ import { BlockInteractionHandler } from "./managers/highlight/BlockInteractionHa
 import { InsignManager } from "./managers/InsignManager";
 import { InsignIoManager } from "./managers/InsignIoManager";
 import { OverlayManager } from "./managers/OverlayManager";
-// @ts-ignore
-import { CreativeControls } from "three-creative-controls";
+import type { SchematicObject } from "./managers/SchematicObject";
 
 import { Cubane } from "./cubane";
 import { KeyboardControls } from "./managers/KeyboardControls";
@@ -86,6 +84,9 @@ export class SchematicRenderer {
 		cameraPosition: THREE.Vector3;
 	};
 	private static isNucleationInitialized = false;
+	private simulationSyncPromise: Promise<void> = Promise.resolve();
+	private simulationRebuilds = new WeakMap<SchematicObject, Promise<void>>();
+	private queuedSimulationRebuilds = new WeakMap<SchematicObject, Promise<void>>();
 
 	constructor(
 		canvas: HTMLCanvasElement,
@@ -117,7 +118,7 @@ export class SchematicRenderer {
 		this.eventEmitter = new EventEmitter();
 
 		// Attach this instance to the canvas for external access
-		(this.canvas as any).schematicRenderer = this;
+		Object.assign(this.canvas, { schematicRenderer: this });
 
 		// Initialize managers that don't depend on initialization process
 		this.sceneManager = new SceneManager(this);
@@ -174,6 +175,7 @@ export class SchematicRenderer {
 			this.options.context.attachRenderer(this);
 		} else {
 			this.cubane = new Cubane({
+				autoRestore: false,
 				showUnknownBlocks: this.options.debugOptions?.showUnknownBlocks,
 			});
 		}
@@ -295,6 +297,7 @@ export class SchematicRenderer {
 				? Promise.resolve()
 				: this.initializeResourcePacks(defaultResourcePacks);
 			await Promise.all([wasmReady, packsReady]);
+			if (this.isDisposed) return;
 			this.updateMissingPackNotice();
 
 			// Step 4: Initialize builders and managers
@@ -318,6 +321,7 @@ export class SchematicRenderer {
 			// Initialize RenderManager (async for WebGPU support)
 			this.renderManager = new RenderManager(this);
 			await this.renderManager.initialize();
+			if (this.isDisposed) return;
 
 			this.highlightManager = new HighlightManager(this);
 			this.insignManager = new InsignManager(this);
@@ -336,6 +340,8 @@ export class SchematicRenderer {
 				showProgress("Loading initial schematics...", 0.75);
 				await this.schematicManager.loadSchematics(schematicData);
 			}
+
+			if (this.isDisposed) return;
 
 			// Step 6: Setup camera and interaction
 			showProgress("Finalizing setup...", 0.9);
@@ -368,6 +374,7 @@ export class SchematicRenderer {
 				this.uiManager.hideProgressBar();
 			}
 		} catch (error) {
+			if (this.isDisposed) return;
 			console.error("Failed to initialize SchematicRenderer:", error);
 
 			// Show error in progress bar
@@ -394,27 +401,36 @@ export class SchematicRenderer {
 					}
 				}
 			});
-			this.eventEmitter.on("blockInteracted", (data: any) => {
+			this.eventEmitter.on("blockInteracted", (data: { position?: [number, number, number] }) => {
 				const [x, y, z] = data.position || [0, 0, 0];
 				this.options.callbacks?.onBlockInteracted?.(x, y, z);
 			});
-			this.eventEmitter.on("simulationTicked", (data: any) => {
+			this.eventEmitter.on("simulationTicked", (data: { tickCount?: number }) => {
 				this.options.callbacks?.onSimulationTicked?.(data.tickCount || 0);
 			});
-			this.eventEmitter.on("simulationSynced", (data: any) => {
-				this.options.callbacks?.onSimulationSynced?.();
-				// Update the schematic wrapper with the synced state before rebuilding
-				const updatedSchematic = data.updatedSchematic;
-				if (updatedSchematic) {
-					const firstSchematic = this.schematicManager?.getFirstSchematic();
-					if (firstSchematic) {
-						firstSchematic.schematicWrapper = updatedSchematic;
-					}
+			this.eventEmitter.on(
+				"simulationSynced",
+				(data: {
+					sourceSchematic: SchematicObject["schematicWrapper"];
+					updatedSchematic: SchematicObject["schematicWrapper"];
+				}) => {
+					if (this.isDisposed) return;
+					this.options.callbacks?.onSimulationSynced?.();
+					const schematic = this.schematicManager
+						?.getAllSchematics()
+						.find((entry) => entry.schematicWrapper === data.sourceSchematic);
+					if (!schematic) return;
+					schematic.schematicWrapper = data.updatedSchematic;
+					this.simulationSyncPromise = this.scheduleSimulationRebuild(schematic);
+					void this.simulationSyncPromise.catch((error: unknown) => {
+						console.error("Failed to rebuild simulated schematic:", error);
+						this.options.callbacks?.onSimulationError?.(
+							error instanceof Error ? error : new Error(String(error))
+						);
+					});
 				}
-				// Rebuild meshes after sync
-				this.rebuildAllChunks();
-			});
-			this.eventEmitter.on("simulationError", (data: any) => {
+			);
+			this.eventEmitter.on("simulationError", (data: { error: Error }) => {
 				this.options.callbacks?.onSimulationError?.(data.error);
 			});
 
@@ -541,7 +557,7 @@ export class SchematicRenderer {
 	 * @param force - Force reload even if Cubane already has packs loaded
 	 */
 	private async reloadResourcePacksIntoCubane(force: boolean = false): Promise<void> {
-		if (!this.cubane) return;
+		if (!this.cubane || this.isDisposed) return;
 
 		try {
 			const enabledPacks = this.resourcePackManager.getEnabledPacksWithBlobs();
@@ -572,9 +588,11 @@ export class SchematicRenderer {
 			try {
 				// Clear existing packs first (important when packs are disabled)
 				await this.cubane.removeAllPacks();
+				if (this.isDisposed) return;
 
 				// Load enabled packs
 				for (const pack of packsToLoad) {
+					if (this.isDisposed) return;
 					try {
 						await this.cubane.loadResourcePack(pack.blob);
 						console.log(`  ✓ Loaded: ${pack.name}`);
@@ -584,11 +602,10 @@ export class SchematicRenderer {
 				}
 			} finally {
 				// End batch mode - this triggers a single atlas rebuild with all packs
-				await this.cubane.endPackBatchUpdate();
+				if (!this.isDisposed) await this.cubane.endPackBatchUpdate();
 			}
 
-			// Clear MaterialRegistry cache so new textures are used
-			MaterialRegistry.clear();
+			if (this.isDisposed) return;
 
 			// Invalidate WorldMeshBuilder cache so new textures are used
 			if (this.worldMeshBuilder) {
@@ -626,10 +643,15 @@ export class SchematicRenderer {
 		// Mark scene as needing update
 		if (this.sceneManager?.scene) {
 			this.sceneManager.scene.traverse((obj) => {
-				if ((obj as any).material) {
-					const mat = (obj as any).material;
+				if (
+					obj instanceof THREE.Mesh ||
+					obj instanceof THREE.Line ||
+					obj instanceof THREE.Points ||
+					obj instanceof THREE.Sprite
+				) {
+					const mat = obj.material;
 					if (Array.isArray(mat)) {
-						mat.forEach((m: any) => {
+						mat.forEach((m: THREE.Material) => {
 							if (m) m.needsUpdate = true;
 						});
 					} else {
@@ -659,6 +681,7 @@ export class SchematicRenderer {
 		defaultResourcePacks?: Record<string, DefaultPackCallback>
 	): Promise<void> {
 		await this.resourcePackManager.initPromise;
+		if (this.isDisposed) return;
 
 		// Check if Cubane already has packs loaded (from auto-restore)
 		const cubanePackCount = this.cubane.getPackCount?.() ?? 0;
@@ -670,6 +693,8 @@ export class SchematicRenderer {
 		const resourcePackBlobs = await this.resourcePackManager.getResourcePackBlobs(
 			defaultResourcePacks || {}
 		);
+
+		if (this.isDisposed) return;
 
 		if (resourcePackBlobs.length === 0) {
 			console.info(
@@ -687,6 +712,7 @@ export class SchematicRenderer {
 
 		try {
 			for (let i = 0; i < resourcePackBlobs.length; i++) {
+				if (this.isDisposed) return;
 				const blob = resourcePackBlobs[i];
 				try {
 					await this.cubane.loadResourcePack(blob as Blob);
@@ -696,7 +722,7 @@ export class SchematicRenderer {
 			}
 		} finally {
 			// End batch mode - triggers single atlas rebuild with all packs
-			await this.cubane.endPackBatchUpdate();
+			if (!this.isDisposed) await this.cubane.endPackBatchUpdate();
 		}
 
 		// Store the blobs for backward compatibility if needed
@@ -1157,7 +1183,9 @@ export class SchematicRenderer {
 	 * @param schematicId ID of the schematic
 	 * @returns Functions for easy console usage
 	 */
-	public createBoundsControls(schematicId: string): any {
+	public createBoundsControls(
+		schematicId: string
+	): ReturnType<SchematicObject["createBoundsControls"]> | null {
 		const schematic = this.schematicManager?.getSchematic(schematicId);
 		if (!schematic) {
 			console.error(`Schematic with ID ${schematicId} not found`);
@@ -1198,7 +1226,7 @@ export class SchematicRenderer {
 	 * @param schematicId ID of the schematic
 	 * @returns The schematic's reactive bounds object or null if not found
 	 */
-	public getBounds(schematicId: string): any {
+	public getBounds(schematicId: string): SchematicObject["bounds"] | null {
 		const schematic = this.schematicManager?.getSchematic(schematicId);
 		if (!schematic) {
 			console.error(`Schematic with ID ${schematicId} not found`);
@@ -1233,7 +1261,7 @@ export class SchematicRenderer {
 		// Also load directly into Cubane for immediate use
 		try {
 			await this.cubane.loadResourcePack(file);
-			await (this.cubane.getAssetLoader() as any).buildTextureAtlas?.();
+			await this.cubane.buildTextureAtlas();
 		} catch (error) {
 			console.error("Failed to load new resource pack into Cubane:", error);
 		}
@@ -1281,46 +1309,12 @@ export class SchematicRenderer {
 	}
 
 	private async reloadResources(): Promise<void> {
-		// Show progress bar for resource reload
-		if (this.options.enableProgressBar && this.uiManager) {
-			this.uiManager.showProgressBar("Reloading resources...");
-			this.uiManager.updateProgress(0.2, "Processing resource packs...");
+		// Keep the pipeline identity stable: builders and sibling views hold this Cubane.
+		await this.reloadResourcePacksIntoCubane(true);
+		if (!this.isDisposed) {
+			this.updateMissingPackNotice();
+			this.materialMap.clear();
 		}
-
-		// Clear Cubane's existing resources
-		this.cubane.dispose();
-		this.cubane = new Cubane({
-			showUnknownBlocks: this.options.debugOptions?.showUnknownBlocks,
-		}); // Recreate fresh instance
-
-		// Reinitialize resource packs in Cubane
-		await this.initializeResourcePacks();
-		this.updateMissingPackNotice();
-
-		if (this.options.enableProgressBar && this.uiManager) {
-			this.uiManager.updateProgress(0.5, "Loading textures and models...");
-		}
-
-		// Rebuild world meshes with new resources
-		if (this.worldMeshBuilder && this.schematicManager) {
-			this.uiManager?.updateProgress(0.7, "Rebuilding schematic meshes...");
-
-			// Trigger rebuild of all schematic meshes
-			// for (const schematic of this.schematicManager.getAllSchematics()) {
-			// 	await this.worldMeshBuilder.rebuildSchematic(schematic.id);
-			// }
-		}
-
-		if (this.options.enableProgressBar && this.uiManager) {
-			this.uiManager.updateProgress(1.0, "Resources loaded");
-
-			// Hide progress bar after a short delay
-			setTimeout(() => {
-				this.uiManager?.hideProgressBar();
-			}, 500);
-		}
-
-		this.materialMap.clear();
 	}
 
 	/**
@@ -1459,17 +1453,36 @@ export class SchematicRenderer {
 	public async syncSimulation(): Promise<void> {
 		const updatedSchematic = this.simulationManager?.syncToSchematic();
 		if (updatedSchematic) {
-			// Update the schematic wrapper and rebuild mesh
-			const firstSchematic = this.schematicManager?.getFirstSchematic();
-			if (firstSchematic) {
-				firstSchematic.schematicWrapper = updatedSchematic;
-				await firstSchematic.rebuildMesh();
-			} else {
-				console.error("[syncSimulation] No first schematic found!");
-			}
+			await this.simulationSyncPromise;
 		} else {
 			console.error("[syncSimulation] No updated schematic returned from sync!");
 		}
+	}
+
+	private scheduleSimulationRebuild(schematic: SchematicObject): Promise<void> {
+		this.simulationRebuilds ??= new WeakMap();
+		this.queuedSimulationRebuilds ??= new WeakMap();
+		const queued = this.queuedSimulationRebuilds.get(schematic);
+		if (queued) return queued;
+
+		const active = this.simulationRebuilds.get(schematic);
+		const rebuild = active
+			? active
+					.catch(() => undefined)
+					.then(() => {
+						this.queuedSimulationRebuilds.delete(schematic);
+						if (!this.isDisposed) return schematic.rebuildMesh();
+					})
+			: schematic.rebuildMesh();
+		this.simulationRebuilds.set(schematic, rebuild);
+		if (active) this.queuedSimulationRebuilds.set(schematic, rebuild);
+		const finished = () => {
+			if (this.simulationRebuilds.get(schematic) === rebuild) {
+				this.simulationRebuilds.delete(schematic);
+			}
+		};
+		void rebuild.then(finished, finished);
+		return rebuild;
 	}
 
 	/**
@@ -1592,6 +1605,27 @@ export class SchematicRenderer {
 		return this.cameraManager.recordingManager.isRecording;
 	}
 
+	public getTargetFPS(): number {
+		return this.targetFPS;
+	}
+	public setTargetFPS(value: number): void {
+		this.targetFPS = Number.isFinite(value) ? Math.max(0, value) : 60;
+		this.options.targetFPS = this.targetFPS;
+		this.frameInterval = this.targetFPS > 0 ? 1000 / this.targetFPS : 0;
+		this.invalidate();
+	}
+	public getIdleFPS(): number {
+		return this.idleFPS;
+	}
+	public setIdleFPS(value: number): void {
+		this.idleFPS = Number.isFinite(value) ? Math.max(0, value) : 1;
+		this.options.idleFPS = this.idleFPS;
+		this.invalidate();
+	}
+	public getFPS(): number {
+		return this.fps;
+	}
+
 	// ===== RENDER SETTINGS API =====
 
 	/**
@@ -1615,7 +1649,7 @@ export class SchematicRenderer {
 	 * Get current camera mode
 	 */
 	public getCameraMode(): string {
-		return (this.cameraManager as any).activeCameraKey;
+		return this.cameraManager.activeCameraPreset;
 	}
 
 	/**
@@ -1746,69 +1780,42 @@ export class SchematicRenderer {
 	}
 
 	public dispose(): void {
-		// Mark as disposed to stop animation loop
+		if (this.isDisposed) return;
 		this.isDisposed = true;
-
-		// Cancel any pending frame/idle-poll to stop the loop immediately
 		this.loop.stop();
-
-		// Unbind pointer events
 		this.unbindPointerEvents();
-
-		// Dispose keyboard controls
-		if (this.keyboardControls) {
-			this.keyboardControls.dispose();
-			this.keyboardControls = undefined;
-		}
-
-		// Dispose inspector
-		if (this.inspectorManager) {
-			this.inspectorManager.dispose();
-			this.inspectorManager = undefined;
-		}
-
-		if (this.regionManager) {
-			this.regionManager.dispose();
-			this.regionManager = undefined;
-		}
-
-		if (this.regionInteractionHandler) {
-			this.regionInteractionHandler.dispose();
-			this.regionInteractionHandler = undefined;
-		}
-
-		if (!this.renderManager) {
-			return;
-		}
-		if (!this.highlightManager) {
-			return;
-		}
-		if (!this.uiManager) {
-			return;
-		}
-
-		this.highlightManager.dispose();
-		this.renderManager.renderer.dispose();
+		this.schematicManager?.dispose();
+		this.worldMeshBuilder?.dispose();
+		this.worldMeshBuilder = undefined;
+		this.simulationManager?.destroy();
+		this.blockInteractionHandler?.dispose();
+		this.interactionManager?.dispose();
+		this.gizmoManager?.dispose();
+		this.keyboardControls?.dispose();
+		this.keyboardControls = undefined;
+		this.inspectorManager?.dispose();
+		this.inspectorManager = undefined;
+		this.regionInteractionHandler?.dispose();
+		this.regionInteractionHandler = undefined;
+		this.regionManager?.dispose();
+		this.regionManager = undefined;
+		this.insignIoManager?.dispose();
+		this.overlayManager?.dispose();
+		this.highlightManager?.dispose();
+		this.renderManager?.dispose();
+		this.renderManager = undefined;
 		this.dragAndDropManager?.dispose();
 		this.resourcePackNotice?.dispose();
-		this.uiManager.dispose();
-		this.cameraManager.dispose();
-
-		// Clean up sidebar UI
+		this.slicerOverlay?.dispose();
+		this.uiManager?.dispose();
+		this.cameraManager?.dispose();
 		this.sidebar?.dispose();
-
-		// Clean up resource pack manager
-		this.resourcePackManager.dispose();
-
-		// Clean up Cubane resources. When using a shared context, the Cubane is owned
-		// by the context (and shared with other renderers) — just detach, don't dispose.
-		if (this.options.context) {
-			this.options.context.detachRenderer(this);
-		} else {
-			this.cubane.dispose();
-		}
-
-		// Cleanup event listeners
+		this.resourcePackManager?.dispose();
+		this.timer.dispose();
+		const canvas = this.canvas as HTMLCanvasElement & { schematicRenderer?: SchematicRenderer };
+		if (canvas.schematicRenderer === this) delete canvas.schematicRenderer;
+		if (this.options.context) this.options.context.detachRenderer(this);
+		else this.cubane?.dispose();
 		this.eventEmitter.removeAllListeners();
 	}
 }

@@ -14,6 +14,10 @@ export interface FlyControlsOptions {
 	lookSensitivity?: number;
 	/** Keybinds for movement */
 	keybinds?: Partial<FlyControlsKeybinds>;
+	/** Whether to create the default fly-mode overlay. */
+	showOverlay?: boolean;
+	/** Also accept arrow keys for horizontal movement. */
+	allowArrowKeys?: boolean;
 }
 
 export interface FlyControlsKeybinds {
@@ -25,6 +29,9 @@ export interface FlyControlsKeybinds {
 	down: string;
 	sprint: string;
 }
+
+type ControlEvent = { type: "change" | "lock" | "unlock"; target: FlyControls };
+type ControlListener = (event: ControlEvent) => void;
 
 const DEFAULT_KEYBINDS: FlyControlsKeybinds = {
 	forward: "KeyW",
@@ -42,8 +49,9 @@ const DEFAULT_KEYBINDS: FlyControlsKeybinds = {
  * WASD to move, Space/C for up/down, Shift to sprint.
  */
 export class FlyControls extends EventEmitter {
-	public enabled: boolean = true;
+	private _enabled = true;
 	public isLocked: boolean = false;
+	private disposed = false;
 
 	private pointerLockControls: PointerLockControls;
 	private camera: THREE.Camera;
@@ -58,6 +66,13 @@ export class FlyControls extends EventEmitter {
 	private pressedKeys = new Set<string>();
 	private velocity = new THREE.Vector3();
 	private direction = new THREE.Vector3();
+	protected movementScale = new THREE.Vector3(1, 1, 1);
+	private forward = new THREE.Vector3();
+	private right = new THREE.Vector3();
+	private movement = new THREE.Vector3();
+	private readonly worldUp = new THREE.Vector3(0, 1, 0);
+	private allowArrowKeys: boolean;
+	private eventListeners = new Map<ControlEvent["type"], Map<ControlListener, () => void>>();
 
 	// UI elements
 	private overlayElement: HTMLDivElement | null = null;
@@ -71,20 +86,65 @@ export class FlyControls extends EventEmitter {
 		this.moveSpeed = options.moveSpeed ?? 10;
 		this.sprintMultiplier = options.sprintMultiplier ?? 2.5;
 		this.keybinds = { ...DEFAULT_KEYBINDS, ...options.keybinds };
+		this.allowArrowKeys = options.allowArrowKeys ?? false;
 
 		// Create PointerLockControls
 		this.pointerLockControls = new PointerLockControls(camera, domElement);
+		this.pointerLockControls.pointerSpeed = options.lookSensitivity ?? 1;
 
 		// Set up event listeners
 		this.setupEventListeners();
 
 		// Create overlay UI
-		this.createOverlay();
+		if (options.showOverlay !== false) this.createOverlay();
+	}
+
+	public get enabled(): boolean {
+		return this._enabled;
+	}
+
+	public set enabled(enabled: boolean) {
+		this._enabled = enabled && !this.disposed;
+		this.pointerLockControls.enabled = this._enabled;
+		if (!this._enabled) {
+			this.pressedKeys.clear();
+			this.velocity.set(0, 0, 0);
+			if (this.isLocked) this.unlock();
+			this.setOverlayVisible(false);
+		}
+	}
+
+	public get object(): THREE.Camera {
+		return this.camera;
+	}
+
+	public set object(camera: THREE.Camera) {
+		this.camera = camera;
+		this.pointerLockControls.object = camera;
+	}
+
+	/** Three.js-style events remain available alongside EventEmitter's on/off API. */
+	public addEventListener(type: ControlEvent["type"], listener: ControlListener): void {
+		let listeners = this.eventListeners.get(type);
+		if (!listeners) this.eventListeners.set(type, (listeners = new Map()));
+		if (listeners.has(listener)) return;
+		const callback = () => listener.call(this, { type, target: this });
+		listeners.set(listener, callback);
+		this.on(type, callback);
+	}
+
+	public removeEventListener(type: ControlEvent["type"], listener: ControlListener): void {
+		const listeners = this.eventListeners.get(type);
+		const callback = listeners?.get(listener);
+		if (callback) this.off(type, callback);
+		listeners?.delete(listener);
 	}
 
 	private setupEventListeners(): void {
+		this.pointerLockControls.addEventListener("change", this.onPointerChange);
 		// Pointer lock events
 		this.pointerLockControls.addEventListener("lock", () => {
+			if (!this.enabled) return;
 			this.isLocked = true;
 			this.showOverlay(false);
 			this.emit("lock");
@@ -107,6 +167,31 @@ export class FlyControls extends EventEmitter {
 		// Keyboard events
 		document.addEventListener("keydown", this.onKeyDown);
 		document.addEventListener("keyup", this.onKeyUp);
+		window.addEventListener("blur", this.onBlur);
+	}
+
+	private onPointerChange = (): void => {
+		if (this.enabled) this.emit("change");
+	};
+
+	private onBlur = (): void => {
+		this.pressedKeys.clear();
+	};
+
+	private movementKey(code: string): string {
+		if (!this.allowArrowKeys) return code;
+		switch (code) {
+			case "ArrowUp":
+				return this.keybinds.forward;
+			case "ArrowDown":
+				return this.keybinds.backward;
+			case "ArrowLeft":
+				return this.keybinds.left;
+			case "ArrowRight":
+				return this.keybinds.right;
+			default:
+				return code;
+		}
 	}
 
 	private onCanvasClick = (): void => {
@@ -118,16 +203,18 @@ export class FlyControls extends EventEmitter {
 	private onKeyDown = (event: KeyboardEvent): void => {
 		if (!this.enabled || !this.isLocked) return;
 
-		this.pressedKeys.add(event.code);
+		const key = this.movementKey(event.code);
+		this.pressedKeys.add(key);
 
 		// Prevent default for movement keys
-		if (Object.values(this.keybinds).includes(event.code)) {
+		if (Object.values(this.keybinds).includes(key)) {
 			event.preventDefault();
+			this.emit("change");
 		}
 	};
 
 	private onKeyUp = (event: KeyboardEvent): void => {
-		this.pressedKeys.delete(event.code);
+		this.pressedKeys.delete(this.movementKey(event.code));
 	};
 
 	private onOverlayClick = (): void => {
@@ -230,7 +317,7 @@ export class FlyControls extends EventEmitter {
 	/**
 	 * Update movement - call this every frame
 	 */
-	public update(deltaTime: number): void {
+	public update(deltaTime: number = 0): void {
 		if (!this.enabled || !this.isLocked) return;
 
 		// Calculate movement direction
@@ -272,27 +359,28 @@ export class FlyControls extends EventEmitter {
 		}
 
 		// Calculate velocity
-		this.velocity.copy(this.direction).multiplyScalar(speed * deltaTime);
+		this.velocity
+			.copy(this.direction)
+			.multiply(this.movementScale)
+			.multiplyScalar(speed * Math.min(deltaTime, 0.1));
 
 		// Get camera direction vectors
-		const cameraDirection = new THREE.Vector3();
-		this.camera.getWorldDirection(cameraDirection);
-
-		// Create camera-relative coordinate system (XZ plane for horizontal movement)
-		const forward = new THREE.Vector3(cameraDirection.x, 0, cameraDirection.z).normalize();
-		const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), forward).normalize();
+		this.camera.getWorldDirection(this.forward);
+		this.forward.y = 0;
+		this.forward.normalize();
+		this.right.crossVectors(this.worldUp, this.forward).normalize();
 
 		// Apply movement in camera space
-		const movement = new THREE.Vector3();
-		movement.addScaledVector(forward, -this.velocity.z); // Forward/backward
-		movement.addScaledVector(right, -this.velocity.x); // Left/right
-		movement.y += this.velocity.y; // Up/down in world space
+		this.movement.set(0, 0, 0);
+		this.movement.addScaledVector(this.forward, -this.velocity.z);
+		this.movement.addScaledVector(this.right, -this.velocity.x);
+		this.movement.y += this.velocity.y;
 
 		// Update camera position
-		this.camera.position.add(movement);
+		this.camera.position.add(this.movement);
 
 		// Emit change event
-		if (movement.length() > 0) {
+		if (this.movement.lengthSq() > 0) {
 			this.emit("change");
 		}
 	}
@@ -334,10 +422,15 @@ export class FlyControls extends EventEmitter {
 	 * Clean up resources
 	 */
 	public dispose(): void {
+		if (this.disposed) return;
+		this.disposed = true;
+		this.enabled = false;
 		// Remove event listeners
 		this.domElement.removeEventListener("click", this.onCanvasClick);
 		document.removeEventListener("keydown", this.onKeyDown);
 		document.removeEventListener("keyup", this.onKeyUp);
+		window.removeEventListener("blur", this.onBlur);
+		this.pointerLockControls.removeEventListener("change", this.onPointerChange);
 
 		// Unlock if locked
 		if (this.isLocked) {
@@ -358,6 +451,7 @@ export class FlyControls extends EventEmitter {
 
 		// Clear state
 		this.pressedKeys.clear();
+		this.eventListeners.clear();
 		this.removeAllListeners();
 	}
 }

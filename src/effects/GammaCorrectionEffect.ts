@@ -2,15 +2,18 @@ import { Effect, BlendFunction } from "postprocessing";
 import { Uniform } from "three";
 
 export class GammaCorrectionEffect extends Effect {
+	private readonly gammaUniform: Uniform<number>;
 	constructor(gamma = 2.2) {
+		const gammaUniform = new Uniform(gamma);
 		super("GammaCorrectionEffect", fragmentShader, {
 			blendFunction: BlendFunction.NORMAL,
-			uniforms: new Map([["gamma", new Uniform(gamma)]]),
+			uniforms: new Map([["gamma", gammaUniform]]),
 		});
+		this.gammaUniform = gammaUniform;
 	}
 
 	public setGamma(value: number) {
-		this.uniforms.get("gamma")!.value = value;
+		this.gammaUniform.value = value;
 	}
 }
 

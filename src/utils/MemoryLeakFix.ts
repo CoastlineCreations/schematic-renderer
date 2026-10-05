@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { MaterialRegistry } from "../MaterialRegistry";
+import type { PerformanceWithMemory } from "../types/browser";
 
 /**
  * Memory Leak Fix Utility
@@ -53,11 +54,19 @@ export class MemoryLeakFix {
 		// Special handling for InstancedMesh
 		if (mesh instanceof THREE.InstancedMesh) {
 			// Clear instance matrix (instanceMatrix is a BufferAttribute, not InstancedBufferAttribute)
-			if (mesh.instanceMatrix && "dispose" in mesh.instanceMatrix) {
-				(mesh.instanceMatrix as any).dispose();
+			if (
+				mesh.instanceMatrix &&
+				"dispose" in mesh.instanceMatrix &&
+				typeof mesh.instanceMatrix.dispose === "function"
+			) {
+				mesh.instanceMatrix.dispose();
 			}
-			if (mesh.instanceColor && "dispose" in mesh.instanceColor) {
-				(mesh.instanceColor as any).dispose();
+			if (
+				mesh.instanceColor &&
+				"dispose" in mesh.instanceColor &&
+				typeof mesh.instanceColor.dispose === "function"
+			) {
+				mesh.instanceColor.dispose();
 			}
 		}
 
@@ -84,26 +93,20 @@ export class MemoryLeakFix {
 		// Try to release from MaterialRegistry first
 		try {
 			MaterialRegistry.releaseMaterial(material);
-		} catch (error) {
+		} catch {
 			// If not in registry, dispose directly
 			material.dispose();
 
 			// Dispose textures if they exist (with proper type checking)
-			const materialAny = material as any;
-			if (materialAny.map && typeof materialAny.map.dispose === "function") {
-				materialAny.map.dispose();
-			}
-			if (materialAny.normalMap && typeof materialAny.normalMap.dispose === "function") {
-				materialAny.normalMap.dispose();
-			}
-			if (materialAny.roughnessMap && typeof materialAny.roughnessMap.dispose === "function") {
-				materialAny.roughnessMap.dispose();
-			}
-			if (materialAny.metalnessMap && typeof materialAny.metalnessMap.dispose === "function") {
-				materialAny.metalnessMap.dispose();
-			}
-			if (materialAny.emissiveMap && typeof materialAny.emissiveMap.dispose === "function") {
-				materialAny.emissiveMap.dispose();
+			for (const key of [
+				"map",
+				"normalMap",
+				"roughnessMap",
+				"metalnessMap",
+				"emissiveMap",
+			] as const) {
+				const texture: unknown = key in material ? Reflect.get(material, key) : undefined;
+				if (texture instanceof THREE.Texture) texture.dispose();
 			}
 		}
 
@@ -184,7 +187,7 @@ export class MemoryLeakFix {
 	 * Monitor memory usage and log warnings
 	 */
 	public static monitorMemory(): { used: number; total: number; limit: number } | null {
-		const performanceAny = performance as any;
+		const performanceAny = performance as PerformanceWithMemory;
 		if (performanceAny.memory) {
 			const memory = {
 				used: Math.round(performanceAny.memory.usedJSHeapSize / 1024 / 1024),
@@ -216,19 +219,6 @@ export class MemoryLeakFix {
 			// Clear user data that might hold references
 			mesh.userData = {};
 		}
-
-		// Clear any event listeners (if they exist)
-		if ((mesh as any).removeEventListener) {
-			// Remove common event listeners that might exist
-			const events = ["added", "removed"];
-			events.forEach((event) => {
-				try {
-					(mesh as any).removeEventListener(event, () => {});
-				} catch (e) {
-					// Event might not exist, ignore
-				}
-			});
-		}
 	}
 
 	/**
@@ -253,7 +243,8 @@ export class MemoryLeakFix {
 			const gl = canvas.getContext("webgl") || canvas.getContext("webgl2");
 			if (gl) {
 				// Try to get Three.js renderer info
-				const renderer = (canvas as any).renderer;
+				const renderer = (canvas as HTMLCanvasElement & { renderer?: THREE.WebGLRenderer })
+					.renderer;
 				if (renderer && renderer.info) {
 					stats.geometries += renderer.info.memory.geometries;
 					stats.materials += renderer.info.memory.textures;

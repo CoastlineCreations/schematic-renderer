@@ -1,7 +1,8 @@
 // ControlsPanel.ts - Panel for camera and movement controls
 
 import { BasePanel, BasePanelOptions } from "./BasePanel";
-import { FlyControlsKeybinds } from "../../managers/FlyControls";
+import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { FlyControlsKeybinds, type FlyControlsOptions } from "../../managers/FlyControls";
 import {
 	UIColors,
 	createToggle,
@@ -80,14 +81,14 @@ export class ControlsPanel extends BasePanel {
 		}
 	}
 
-	private getActiveOrbitControls(): any | null {
+	private getActiveOrbitControls(): OrbitControls | null {
 		const activeKey = this.renderer.cameraManager.activeControlKey;
 		if (activeKey && activeKey.includes("orbit")) {
 			const controls = this.renderer.cameraManager.controls.get(activeKey);
-			return controls || null;
+			if (controls instanceof OrbitControls) return controls;
 		}
 		for (const [key, controls] of this.renderer.cameraManager.controls) {
-			if (key.includes("orbit")) {
+			if (key.includes("orbit") && controls instanceof OrbitControls) {
 				return controls;
 			}
 		}
@@ -473,8 +474,8 @@ export class ControlsPanel extends BasePanel {
 		value: number
 	): void {
 		this.renderer.cameraManager.controls.forEach((controls, key) => {
-			if (key.includes("orbit") && (controls as any)[setting] !== undefined) {
-				(controls as any)[setting] = value;
+			if (key.includes("orbit") && controls instanceof OrbitControls) {
+				controls[setting] = value;
 			}
 		});
 	}
@@ -549,7 +550,7 @@ export class ControlsPanel extends BasePanel {
 		}
 
 		// Update fly controls settings
-		const flySettings: any = {};
+		const flySettings: Partial<FlyControlsOptions> = {};
 		if (settings.flySpeed !== undefined) flySettings.moveSpeed = settings.flySpeed;
 		if (settings.sprintMultiplier !== undefined)
 			flySettings.sprintMultiplier = settings.sprintMultiplier;

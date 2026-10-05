@@ -1,6 +1,7 @@
 // Types definitions
 type PaletteGeometryData = {
 	index: number;
+	category?: string;
 	occlusionFlags: number; // Bitmask: 0=West, 1=East, 2=Down, 3=Up, 4=North, 5=South
 	geometries: Array<{
 		positions: Float32Array;
@@ -40,9 +41,12 @@ self.onmessage = (event: MessageEvent) => {
 				buildChunk(payload as unknown as ChunkBuildRequest);
 				break;
 		}
-	} catch (error: any) {
+	} catch (error: unknown) {
 		console.error("Worker Error:", error);
-		self.postMessage({ type: "error", error: error.message });
+		self.postMessage({
+			type: "error",
+			error: error instanceof Error ? error.message : String(error),
+		});
 	}
 };
 
@@ -170,7 +174,7 @@ function buildChunk(request: ChunkBuildRequest) {
 			const paletteItem = paletteGeometries.get(paletteIndex);
 
 			if (paletteItem) {
-				const category = (paletteItem as any).category || "solid";
+				const category = paletteItem.category || "solid";
 
 				let catMap = categoryBatches.get(category);
 				if (!catMap) {
@@ -195,7 +199,7 @@ function buildChunk(request: ChunkBuildRequest) {
 			const paletteItem = paletteGeometries.get(paletteIndex);
 
 			if (paletteItem) {
-				const category = (paletteItem as any).category || "solid";
+				const category = paletteItem.category || "solid";
 
 				let catMap = categoryBatches.get(category);
 				if (!catMap) {
@@ -213,7 +217,9 @@ function buildChunk(request: ChunkBuildRequest) {
 		}
 	}
 
-	const results: any[] = [];
+	const results: Array<
+		NonNullable<ReturnType<typeof mergeGeometriesWithCulling>> & { category: string }
+	> = [];
 	const transferables: Transferable[] = [];
 	const sortTime = performance.now() - startSort;
 	let mergeTime = 0;
@@ -227,13 +233,14 @@ function buildChunk(request: ChunkBuildRequest) {
 		const sortedIndices = Array.from(paletteMap.keys()).sort((a, b) => a - b);
 
 		const positions: number[] = [];
-		const geometryData: any[] = [];
+		const geometryData: PaletteGeometryData["geometries"] = [];
 		const occlusionFlags: number[] = [];
 
 		// Expand blocks into flat arrays in sorted order
 		for (const pIdx of sortedIndices) {
-			const blockIndices = paletteMap.get(pIdx)!;
-			const paletteItem = paletteGeometries.get(pIdx)!;
+			const blockIndices = paletteMap.get(pIdx);
+			const paletteItem = paletteGeometries.get(pIdx);
+			if (!blockIndices || !paletteItem) continue;
 
 			for (const blockIdx of blockIndices) {
 				// Extract x, y, z from original blocks array using stored index
@@ -302,7 +309,7 @@ function buildChunk(request: ChunkBuildRequest) {
 }
 
 function mergeGeometriesWithCulling(
-	geometries: any[],
+	geometries: PaletteGeometryData["geometries"],
 	positions: number[],
 	// occlusionFlags: number[], // Unused directly in loop, but kept for signature if needed
 	_occlusionFlags: number[],
@@ -406,7 +413,7 @@ function mergeGeometriesWithCulling(
 									// solid blocks behind them while same-category neighbours
 									// (e.g. glass-on-glass) still cull.
 									if (
-										(neighborGeomData as any).category === category &&
+										neighborGeomData.category === category &&
 										(neighborGeomData.occlusionFlags & (1 << neighborFaceIndex)) !== 0
 									) {
 										isVisible = false;

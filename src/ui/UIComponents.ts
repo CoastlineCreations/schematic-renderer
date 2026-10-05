@@ -681,7 +681,7 @@ export abstract class BaseUI {
 
 	protected createContainer(): HTMLDivElement {
 		const container = document.createElement("div");
-		const pos = getPositionStyles(this.options.uiPosition!);
+		const pos = getPositionStyles(this.options.uiPosition ?? "top-right");
 
 		Object.assign(container.style, {
 			...UIStyles.panel,

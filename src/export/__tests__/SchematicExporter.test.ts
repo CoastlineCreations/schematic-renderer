@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import * as THREE from "three";
 
 // Mock all problematic imports
-vi.mock("nucleation", () => ({
+vi.mock("../../nucleationExports", () => ({
 	default: vi.fn().mockResolvedValue(undefined),
 	SchematicWrapper: class {},
 }));

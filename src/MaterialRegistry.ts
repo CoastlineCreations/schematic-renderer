@@ -30,10 +30,11 @@ export class MaterialRegistry {
 		// Create a unique key based on material properties
 		const key = this.createMaterialKey(sourceMaterial);
 
-		if (this.materials.has(key)) {
+		const existing = this.materials.get(key);
+		if (existing) {
 			// Increment reference count
 			this.materialRefCount.set(key, (this.materialRefCount.get(key) || 0) + 1);
-			return this.materials.get(key)!;
+			return existing;
 		}
 
 		// Clone the material to ensure we don't modify the original

@@ -5,7 +5,7 @@ import * as THREE from "three";
 vi.mock("../../wasm/minecraft_schematic_utils_bg.wasm", () => ({
 	default: "mock-utils-wasm",
 }));
-vi.mock("nucleation", () => ({
+vi.mock("../../nucleationExports", () => ({
 	default: vi.fn().mockResolvedValue(undefined),
 	SchematicWrapper: class MockSchematicWrapper {
 		from_data = vi.fn();
@@ -35,6 +35,7 @@ vi.mock("../SchematicObject", () => ({
 		}
 
 		getMeshes = vi.fn().mockResolvedValue([]);
+		dispose = vi.fn();
 		containsPosition = vi.fn().mockReturnValue(false);
 		getBoundingBox = vi.fn().mockReturnValue([
 			[0, 0, 0],
@@ -68,7 +69,7 @@ vi.mock("../../performance/PerformanceMonitor", () => ({
 }));
 
 import { SchematicManager } from "../SchematicManager";
-import { SchematicWrapper } from "nucleation";
+import { SchematicWrapper } from "../../nucleationExports";
 
 describe("SchematicManager", () => {
 	let manager: SchematicManager;
@@ -111,6 +112,32 @@ describe("SchematicManager", () => {
 
 	afterEach(() => {
 		vi.clearAllMocks();
+	});
+
+	describe("disposal", () => {
+		it("removes a schematic immediately without waiting for its pending meshes", async () => {
+			await manager.loadSchematic("pending", new ArrayBuffer(1));
+			const schematic = manager.getSchematic("pending");
+			expect(schematic).toBeDefined();
+			if (!schematic) throw new Error("Schematic was not loaded");
+			vi.mocked(schematic.getMeshes).mockReturnValue(new Promise(() => {}));
+			await manager.removeSchematic("pending");
+			expect(schematic.dispose).toHaveBeenCalledOnce();
+			expect(schematic.getMeshes).not.toHaveBeenCalled();
+			expect(manager.isEmpty()).toBe(true);
+		});
+
+		it("disposes all objects once and ignores loads after teardown", async () => {
+			await manager.loadSchematic("one", new ArrayBuffer(1));
+			const schematic = manager.getSchematic("one");
+			expect(schematic).toBeDefined();
+			if (!schematic) throw new Error("Schematic was not loaded");
+			manager.dispose();
+			manager.dispose();
+			await manager.loadSchematic("late", new ArrayBuffer(1));
+			expect(schematic.dispose).toHaveBeenCalledOnce();
+			expect(manager.isEmpty()).toBe(true);
+		});
 	});
 
 	describe("initialization", () => {

@@ -12,35 +12,38 @@
 // Lazy-load lil-gui to reduce initial bundle size
 // import GUI from 'lil-gui';
 import * as THREE from "three";
+import type GUIType from "lil-gui";
+import type { Inspector } from "three/examples/jsm/inspector/Inspector.js";
 import type { SchematicRenderer } from "../SchematicRenderer";
 import type { DebugOptions } from "../SchematicRendererOptions";
 
 // Dynamic import for debug GUI
-let GUI: any = null;
-let guiLoaded = false;
+let guiPromise: Promise<typeof GUIType> | null = null;
 
-async function loadGUI() {
-	if (guiLoaded) return;
-	console.log("[InspectorManager] Lazy-loading debug GUI (lil-gui)...");
-	const lilGui = await import("lil-gui");
-	GUI = lilGui.default || lilGui.GUI;
-	guiLoaded = true;
-	console.log("[InspectorManager] Debug GUI loaded");
+async function loadGUI(): Promise<typeof GUIType> {
+	guiPromise ??= import("lil-gui").then((module) => module.default);
+	return guiPromise;
 }
 
 export interface InspectorPanel {
 	name: string;
-	folder: any; // GUI type from lil-gui
+	folder: GUIType;
 }
 
 export class InspectorManager {
 	private renderer: SchematicRenderer;
-	private gui: any | null = null;
+	private gui: GUIType | null = null;
 	private options: DebugOptions;
 	private panels: Map<string, InspectorPanel> = new Map();
 	private isVisible: boolean = true;
-	private state: Record<string, any> = {};
-	private threeInspector: any = null; // Three.js Inspector (WebGPU only)
+	private state: Record<string, string | number | boolean> = {};
+	private threeInspector: Inspector | null = null; // Three.js Inspector (WebGPU only)
+	private disposed = false;
+	private intervals: ReturnType<typeof setInterval>[] = [];
+	private readonly onKeyDown = (event: KeyboardEvent): void => {
+		if (event.key === "`" || event.key === "~") this.toggle();
+	};
+	public readonly ready: Promise<void>;
 
 	constructor(renderer: SchematicRenderer, options: DebugOptions = {}) {
 		this.renderer = renderer;
@@ -50,14 +53,19 @@ export class InspectorManager {
 			...options,
 		};
 
-		if (this.options.enableInspector) {
-			this.initialize();
-		}
+		this.ready = this.options.enableInspector ? this.initialize() : Promise.resolve();
+		void this.ready.catch((error: unknown) => {
+			if (!this.disposed) {
+				this.dispose();
+				console.error("Failed to initialize inspector:", error);
+			}
+		});
 	}
 
 	private async initialize(): Promise<void> {
 		// Lazy-load lil-gui only when inspector is enabled
-		await loadGUI();
+		const GUI = await loadGUI();
+		if (this.disposed) return;
 
 		// Create main GUI (lil-gui - works with both WebGL and WebGPU)
 		this.gui = new GUI({
@@ -133,7 +141,7 @@ export class InspectorManager {
 	/**
 	 * Get the Three.js Inspector instance (WebGPU only)
 	 */
-	public getThreeInspector(): any {
+	public getThreeInspector(): Inspector | null {
 		return this.threeInspector;
 	}
 
@@ -173,7 +181,6 @@ export class InspectorManager {
 			// Performance
 			targetFPS: this.renderer.options.targetFPS ?? 60,
 			idleFPS: this.renderer.options.idleFPS ?? 1,
-			adaptiveFPS: this.renderer.options.enableAdaptiveFPS ?? true,
 
 			// GPU
 			gpuCompute: this.renderer.options.gpuComputeOptions?.enabled ?? false,
@@ -200,7 +207,7 @@ export class InspectorManager {
 			.onChange((value: number) => {
 				// Update gamma correction if effect exists
 				if (this.renderer.renderManager) {
-					(this.renderer.renderManager as any).updateGamma?.(value);
+					this.renderer.renderManager.setGamma(value);
 				}
 			});
 
@@ -251,9 +258,9 @@ export class InspectorManager {
 		const rendererRef = this.renderer;
 		const updateInfo = () => {
 			if (rendererRef.renderManager) {
-				const info = (rendererRef.renderManager as any).renderer?.info;
+				const info = rendererRef.renderManager.renderer?.info;
 				if (info) {
-					infoFolder.controllers.forEach((c: any) => c.updateDisplay());
+					infoFolder.controllers.forEach((c) => c.updateDisplay());
 				}
 			}
 		};
@@ -261,12 +268,12 @@ export class InspectorManager {
 		// Store reference for closure
 		const drawCallsObj = {
 			get objects() {
-				return (rendererRef.renderManager as any)?.renderer?.info?.render?.calls ?? 0;
+				return rendererRef.renderManager?.renderer?.info?.render?.calls ?? 0;
 			},
 		};
 		infoFolder.add(drawCallsObj, "objects").name("Draw Calls").disable().listen();
 
-		setInterval(updateInfo, 1000);
+		this.intervals.push(setInterval(updateInfo, 1000));
 
 		folder.close();
 		this.panels.set("scene", { name: "Scene", folder });
@@ -334,7 +341,7 @@ export class InspectorManager {
 		posFolder.add(pos, "y").name("Y").disable().listen();
 		posFolder.add(pos, "z").name("Z").disable().listen();
 
-		setInterval(updateCameraPos, 100);
+		this.intervals.push(setInterval(updateCameraPos, 100));
 
 		folder
 			.add(
@@ -359,7 +366,7 @@ export class InspectorManager {
 			.name("Target FPS")
 			.onChange((value: number) => {
 				if (this.renderer.renderManager) {
-					(this.renderer.renderManager as any).setTargetFPS?.(value);
+					this.renderer.setTargetFPS(value);
 				}
 			});
 
@@ -368,16 +375,7 @@ export class InspectorManager {
 			.name("Idle FPS")
 			.onChange((value: number) => {
 				if (this.renderer.renderManager) {
-					(this.renderer.renderManager as any).setIdleFPS?.(value);
-				}
-			});
-
-		folder
-			.add(this.state, "adaptiveFPS")
-			.name("Adaptive FPS")
-			.onChange((value: boolean) => {
-				if (this.renderer.renderManager) {
-					(this.renderer.renderManager as any).setAdaptiveFPS?.(value);
+					this.renderer.setIdleFPS(value);
 				}
 			});
 
@@ -388,12 +386,12 @@ export class InspectorManager {
 
 		const updateStats = () => {
 			if (rendererRef.renderManager) {
-				const rm = rendererRef.renderManager as any;
-				stats.fps = rm.currentFPS ?? 0;
-				stats.ms = rm.frameTime ?? 0;
+				stats.fps = rendererRef.getFPS();
+				stats.ms = stats.fps > 0 ? 1000 / stats.fps : 0;
 			}
-			if ((performance as any).memory) {
-				stats.memory = Math.round((performance as any).memory.usedJSHeapSize / 1024 / 1024);
+			const memory = (performance as Performance & { memory?: { usedJSHeapSize: number } }).memory;
+			if (memory) {
+				stats.memory = Math.round(memory.usedJSHeapSize / 1024 / 1024);
 			}
 		};
 
@@ -401,7 +399,7 @@ export class InspectorManager {
 		statsFolder.add(stats, "ms").name("Frame (ms)").disable().listen();
 		statsFolder.add(stats, "memory").name("Memory (MB)").disable().listen();
 
-		setInterval(updateStats, 500);
+		this.intervals.push(setInterval(updateStats, 500));
 
 		folder.close();
 		this.panels.set("performance", { name: "Performance", folder });
@@ -455,13 +453,13 @@ export class InspectorManager {
 
 		// Get GPU info based on renderer type
 		try {
-			const rm = this.renderer.renderManager as any;
+			const rm = this.renderer.renderManager;
 			if (rm?.renderer) {
 				if (isWebGPUActive) {
 					// WebGPU doesn't have the same debug info API
 					gpuInfo.renderer = "WebGPU Renderer";
 					gpuInfo.vendor = "GPU Adapter";
-				} else {
+				} else if (rm.renderer instanceof THREE.WebGLRenderer) {
 					// WebGL debug info
 					const gl = rm.renderer.getContext();
 					const debugInfo = gl.getExtension("WEBGL_debug_renderer_info");
@@ -471,7 +469,7 @@ export class InspectorManager {
 					}
 				}
 			}
-		} catch (e) {
+		} catch {
 			// Ignore
 		}
 
@@ -509,7 +507,7 @@ export class InspectorManager {
 		const folder = this.gui.addFolder(config.name);
 
 		for (const control of config.controls) {
-			const controlState: Record<string, any> = {};
+			const controlState: Record<string, unknown> = {};
 			controlState[control.name] = control.value;
 			const onChange = control.onChange || (() => {});
 
@@ -542,7 +540,7 @@ export class InspectorManager {
 	/**
 	 * Add a folder to the GUI programmatically
 	 */
-	public addFolder(name: string): any | null {
+	public addFolder(name: string): GUIType | null {
 		if (!this.gui) return null;
 		const folder = this.gui.addFolder(name);
 		this.panels.set(name.toLowerCase(), { name, folder });
@@ -552,14 +550,14 @@ export class InspectorManager {
 	/**
 	 * Get a folder by name
 	 */
-	public getFolder(name: string): any | null {
+	public getFolder(name: string): GUIType | null {
 		return this.panels.get(name.toLowerCase())?.folder ?? null;
 	}
 
 	/**
 	 * Get the main GUI instance
 	 */
-	public getGUI(): any | null {
+	public getGUI(): GUIType | null {
 		return this.gui;
 	}
 
@@ -579,7 +577,7 @@ export class InspectorManager {
 	private takeScreenshot(): void {
 		if (!this.renderer.renderManager) return;
 
-		const rm = this.renderer.renderManager as any;
+		const rm = this.renderer.renderManager;
 		if (rm.renderer) {
 			const camera = this.renderer.cameraManager.activeCamera.camera;
 			rm.renderer.render(this.renderer.sceneManager.scene, camera);
@@ -593,12 +591,7 @@ export class InspectorManager {
 	}
 
 	private setupKeyboardShortcut(): void {
-		document.addEventListener("keydown", (e) => {
-			// Toggle GUI with backtick/tilde key
-			if (e.key === "`" || e.key === "~") {
-				this.toggle();
-			}
-		});
+		document.addEventListener("keydown", this.onKeyDown);
 	}
 
 	/**
@@ -643,10 +636,18 @@ export class InspectorManager {
 	 * Dispose of the inspector
 	 */
 	public dispose(): void {
+		if (this.disposed) return;
+		this.disposed = true;
+		for (const interval of this.intervals) clearInterval(interval);
+		this.intervals = [];
+		document.removeEventListener("keydown", this.onKeyDown);
+		this.threeInspector?.domElement.remove();
+		this.threeInspector = null;
 		if (this.gui) {
 			this.gui.destroy();
 			this.gui = null;
 		}
 		this.panels.clear();
+		this.isVisible = false;
 	}
 }
