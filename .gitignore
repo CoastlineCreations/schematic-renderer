@@ -27,7 +27,6 @@ dist-ssr
 
 
 schematic-renderer-*.tgz
-package-lock.json
 
 # Rust/WASM build artifacts
 mesh_builder_wasm/target/

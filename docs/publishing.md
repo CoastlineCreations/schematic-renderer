@@ -6,7 +6,7 @@ Use an npm user or organization scope you control. The examples below assume you
 have publishing rights to `@coastlinecreations`; replace that scope if needed.
 The example versions must not already exist under those package names.
 
-Prerequisites: Node 24, npm, Bun 1.4.2, Rust with the `wasm32-unknown-unknown` target,
+Prerequisites: Node 24, npm, Rust with the `wasm32-unknown-unknown` target,
 and an npm account with the required publishing/2FA setup. Authenticate with
 `npm login --registry=https://registry.npmjs.org`.
 
@@ -53,7 +53,7 @@ npm pkg set \
   name='@coastlinecreations/schematic-renderer' \
   version='1.8.0' \
   'dependencies.nucleation=npm:@coastlinecreations/nucleation@0.10.24'
-npx --yes bun@1.4.2 install
+npm install
 npx playwright install chromium
 npm run verify
 npm pack --dry-run
@@ -61,10 +61,10 @@ npm pack --dry-run
 
 The npm alias keeps existing `import ... from "nucleation"` statements and emitted
 TypeScript declarations working while consumers install your scoped fork. Commit
-both `package.json` and `bun.lock`, then push before publishing:
+both `package.json` and `package-lock.json`, then push before publishing:
 
 ```sh
-git add package.json bun.lock
+git add package.json package-lock.json
 git commit -m "Prepare scoped renderer release with Nucleation fork"
 git push origin master
 npm publish --access public --registry=https://registry.npmjs.org

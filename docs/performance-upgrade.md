@@ -6,7 +6,7 @@
 - Three.js 0.184.0 → 0.186.1, matching types 0.186.0 and postprocessing 6.39.5.
 - Nucleation 0.2.18 → **0.10.4**, pinned intentionally.
 - Compatible maintenance updates for the test, lint, formatting, DOM and archive dependencies.
-- Removed unused packages and the obsolete creative-controls dependency. Creative controls now share the renderer's Three.js version. Development-only packages no longer appear in runtime dependencies. The old generic CORS proxy was replaced by a loopback-only Node helper for the fixed Minecraft client URL; the Bun audit reports no vulnerabilities.
+- Removed unused packages and the obsolete creative-controls dependency. Creative controls now share the renderer's Three.js version. Development-only packages no longer appear in runtime dependencies. The old generic CORS proxy was replaced by a loopback-only Node helper for the fixed Minecraft client URL; npm audit reports no vulnerabilities.
 
 Nucleation 0.10.4 is the newest published version verified to include both simulation and circuit WASM functions. Every published later release through 0.10.24 lacks the `MchprsWorld_*` and `CircuitBuilder_*` exports, although the JavaScript API declares them. Calling their constructors in 0.10.24 throws `wasm.MchprsWorld_create is not a function` or `wasm.CircuitBuilder_create is not a function`. Upgrading this pin requires real WASM simulation and circuit tests, not just TypeScript checks.
 

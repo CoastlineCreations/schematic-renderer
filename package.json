@@ -1,6 +1,11 @@
 {
 	"name": "schematic-renderer",
 	"version": "1.7.0",
+	"packageManager": "npm@11.17.0",
+	"allowScripts": {
+		"fsevents@2.3.2": false,
+		"fsevents@2.3.3": false
+	},
 	"license": "AGPL-3.0-only",
 	"description": "A schematic renderer package for Minecraft schematics using Three.js. Forked from schematic-renderer",
 	"repository": {

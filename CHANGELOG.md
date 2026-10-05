@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Standardized on Bun as the package manager
+- Standardized on npm with a committed package-lock.json, reproducible npm ci installs, and Node.js 24 in CI
 - Updated package.json with repository metadata and keywords
 
 ### Removed

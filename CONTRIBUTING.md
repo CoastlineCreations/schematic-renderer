@@ -6,7 +6,7 @@ Thank you for your interest in contributing to schematic-renderer! This document
 
 ### Prerequisites
 
-- [Bun](https://bun.sh/) (recommended) or Node.js 18+
+- Node.js 24 with npm (the version used by CI)
 - Git
 
 ### Development Setup
@@ -14,26 +14,35 @@ Thank you for your interest in contributing to schematic-renderer! This document
 1. Clone the repository:
 
    ```bash
-   git clone https://github.com/Schem-at/schematic-renderer.git
+   git clone https://github.com/CoastlineCreations/schematic-renderer.git
    cd schematic-renderer
    ```
 
 2. Install dependencies:
 
    ```bash
-   bun install
+   npm ci
    ```
 
 3. Start the development server:
 
    ```bash
-   bun run dev
+   npm run dev
    ```
 
 4. Run tests:
    ```bash
-   bun run test
+   npm run test
    ```
+
+Commit `package-lock.json` whenever dependencies change. Use `npm install` when
+adding or updating dependencies and `npm ci` to reproduce the committed versions.
+Install Chromium once with `npx --no-install playwright install chromium` before
+running the complete `npm run verify` suite.
+
+The pinned `fsevents` packages include their macOS native binaries. Their redundant
+install-time rebuilds are explicitly disabled in `allowScripts`; file watching
+still uses the packaged binaries.
 
 ## Development Workflow
 
@@ -49,24 +58,24 @@ This project uses ESLint and Prettier for code formatting. The configuration enf
 Pre-commit hooks will automatically lint and format your code. You can also run manually:
 
 ```bash
-bun run lint        # Check for linting errors
-bun run lint:fix    # Fix linting errors
-bun run format      # Format code with Prettier
+npm run lint        # Check for linting errors
+npm run lint:fix    # Fix linting errors
+npm run format      # Format code with Prettier
 ```
 
 ### Running Tests
 
 ```bash
-bun run test           # Run tests in watch mode
-bun run test:run       # Run tests once
-bun run test:coverage  # Run tests with coverage report
+npm run test           # Run tests in watch mode
+npm run test:run       # Run tests once
+npm run test:coverage  # Run tests with coverage report
 ```
 
 ### Building
 
 ```bash
-bun run build      # Build the library
-bun run typecheck  # Run TypeScript type checking
+npm run build      # Build the library
+npm run typecheck  # Run TypeScript type checking
 ```
 
 ## Pull Request Process
@@ -82,9 +91,9 @@ bun run typecheck  # Run TypeScript type checking
 3. Ensure all tests pass:
 
    ```bash
-   bun run test:run
-   bun run lint
-   bun run typecheck
+   npm run test:run
+   npm run lint
+   npm run typecheck
    ```
 
 4. Push your branch and create a Pull Request.

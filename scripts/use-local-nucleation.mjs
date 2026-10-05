@@ -48,6 +48,8 @@ try {
 	}).trim();
 	const manifestPath = resolve(staged, "package.json");
 	const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+	// Renderer imports use this alias even when the fork's release package is scoped.
+	manifest.name = "nucleation";
 	manifest.version = `${version}-local.${commit}`;
 	manifest.private = true;
 	await writeFile(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
@@ -86,7 +88,7 @@ try {
 	]);
 	console.log(`Local Nucleation ${manifest.version} installed from ${fork}.`);
 	console.log(
-		"package.json and bun.lock retain the verified registry dependency. Run npm run verify next."
+		"package.json and package-lock.json retain the verified registry dependency. Run npm run verify next."
 	);
 } finally {
 	await rm(temporary, { recursive: true, force: true });

@@ -2,6 +2,6 @@ dist/
 node_modules/
 *.wasm
 *.tgz
-bun.lock
+package-lock.json
 mesh_builder_wasm/
 test/

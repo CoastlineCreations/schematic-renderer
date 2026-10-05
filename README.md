@@ -4,7 +4,7 @@ See [dependency and rendering upgrade notes](docs/performance-upgrade.md) for pe
 
 For the sibling Nucleation fork, see [local build, integration and benchmark instructions](docs/nucleation-fork.md).
 
-**Native preview development:** [rendering features, example and integration guide](docs/rendering-parity.md). Run `bun run dev:preview` to open the Minecraft 26.2 sample.
+**Native preview development:** [rendering features, example and integration guide](docs/rendering-parity.md). Run `npm run dev:preview` to open the Minecraft 26.2 sample.
 A powerful, high-performance 3D rendering library for Minecraft schematics (.schematic, .schem, .litematic), built with Three.js and Rust/WASM.
 
 ![Schematic Renderer Demo](./preview.gif)
@@ -46,8 +46,6 @@ If you are using a bundler like Vite, Webpack, or Rollup:
 npm install schematic-renderer
 # or
 yarn add schematic-renderer
-# or
-bun add schematic-renderer
 ```
 
 ## Basic Usage
@@ -794,23 +792,23 @@ four buckets rendered and the distance/support stats shown) lives in
 
 ```bash
 # Clone the repository
-git clone https://github.com/schem-at/schematic-renderer.git
+git clone https://github.com/CoastlineCreations/schematic-renderer.git
 cd schematic-renderer
 
 # Install dependencies
-bun install
+npm ci
 
 # Start development server
-bun run dev
+npm run dev
 
 # Build for production (outputs to /dist)
-bun run build
+npm run build
 
 # Run tests
-bun run test
+npm run test
 
 # Run linting
-bun run lint
+npm run lint
 ```
 
 ## Contributing

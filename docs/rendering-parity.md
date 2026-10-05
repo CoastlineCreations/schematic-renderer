@@ -13,8 +13,8 @@ Coastline itself is not switched to this repository by this change.
 ## Try the preview
 
 ```sh
-bun install --frozen-lockfile
-bun run dev:preview
+npm ci
+npm run dev:preview
 ```
 
 Open `/preview.html`. The bundled, generated sample exercises block rendering,
@@ -143,8 +143,8 @@ These rules work with other resource packs without name-specific exceptions.
 ## Verification and future integration
 
 ```sh
-bunx playwright install chromium # once per development machine
-bun run verify
+npx --no-install playwright install chromium # once per development machine
+npm run verify
 ```
 
 Verification covers formatting, lint, strict typechecking, unit/lifecycle tests,

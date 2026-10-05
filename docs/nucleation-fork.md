@@ -16,10 +16,10 @@ npm run verify
 
 The command builds both WASM entries, assembles a private local npm archive, tests that archive, and installs it into `node_modules`. It disables the fork's default `sccache` wrapper unless `RUSTC_WRAPPER` is explicitly set. Set `NUCLEATION_PATH` to use another checkout. After both outputs have already been built, `npm run nucleation:local -- --skip-build` only packs, tests and installs them.
 
-The committed dependency and `bun.lock` retain **0.10.4**, the last verified published version with simulation. The local install uses **0.10.24-local.<commit>**, including the checkout's current uncommitted changes. It does not publish anything or make other installations depend on an absolute local path. A normal dependency reinstall can restore the registry version; rerun `nucleation:local` afterwards. To explicitly restore it:
+The committed dependency and `package-lock.json` retain **0.10.4**, the last verified published version with simulation. The local install uses **0.10.24-local.<commit>**, including the checkout's current uncommitted changes. It does not publish anything or make other installations depend on an absolute local path. A normal dependency reinstall can restore the registry version; rerun `nucleation:local` afterwards. To explicitly restore it:
 
 ```sh
-npm install --no-save --package-lock=false --ignore-scripts nucleation@0.10.4
+npm ci
 ```
 
 A permanent distribution change requires publishing a versioned fork artifact, then pinning that artifact in this renderer. No fork package has been published by this work.
