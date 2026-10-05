@@ -1,10 +1,12 @@
-# Local Nucleation fork
+# Nucleation fork
 
-The sibling `../nucleation` checkout is based on Nucleation 0.10.24. Its npm build now includes `simulation` alongside `bridge,mc-tick,meshing,voxelize`. The published 0.10.24 package declares MCHPRS and circuit methods but omits their WASM exports; rebuilding with the missing feature restores them.
+The renderer pins the published [`@coastlinecreations/nucleation@0.10.24`](https://www.npmjs.com/package/@coastlinecreations/nucleation) fork. Its npm build includes `simulation` alongside `bridge,mc-tick,meshing,voxelize`. The unscoped upstream `nucleation@0.10.24` declares MCHPRS and circuit methods but omits their WASM exports; the scoped fork restores them.
+
+The dependency uses `"nucleation": "npm:@coastlinecreations/nucleation@0.10.24"`, keeping existing imports and generated TypeScript declarations compatible. `npm ci` installs the published artifact without Rust or a sibling checkout. The downloaded registry archive was integrity-checked and tested through both its main and renderer-only entries.
 
 The fork checks the actual WASM exports during package assembly, including cached builds. CI packs and extracts the npm archive, then tests the main and renderer-only entries. The main tests cover real lever-to-lamp propagation, typed circuit ON/OFF execution and schematic synchronization. Both entries exercise typed rendering, bounds, properties, buffer lifetime, round-trips and `clearContents()`.
 
-## Use both local checkouts
+## Develop the fork locally (optional)
 
 Install Rust with the `wasm32-unknown-unknown` target and use the Node version required by this renderer. Then, from `schematic-renderer`:
 
@@ -16,13 +18,13 @@ npm run verify
 
 The command builds both WASM entries, assembles a private local npm archive, tests that archive, and installs it into `node_modules`. It disables the fork's default `sccache` wrapper unless `RUSTC_WRAPPER` is explicitly set. Set `NUCLEATION_PATH` to use another checkout. After both outputs have already been built, `npm run nucleation:local -- --skip-build` only packs, tests and installs them.
 
-The committed dependency and `package-lock.json` retain **0.10.4**, the last verified published version with simulation. The local install uses **0.10.24-local.<commit>**, including the checkout's current uncommitted changes. It does not publish anything or make other installations depend on an absolute local path. A normal dependency reinstall can restore the registry version; rerun `nucleation:local` afterwards. To explicitly restore it:
+The committed dependency and `package-lock.json` retain **@coastlinecreations/nucleation@0.10.24**. The optional local install uses **0.10.24-local.<commit>**, including the checkout's current uncommitted changes, without changing that pin. To restore the published fork after local development:
 
 ```sh
 npm ci
 ```
 
-A permanent distribution change requires publishing a versioned fork artifact, then pinning that artifact in this renderer. No fork package has been published by this work.
+For future upgrades, publish and validate a new fork version before updating the npm alias and lockfile together.
 
 ## Renderer behavior
 

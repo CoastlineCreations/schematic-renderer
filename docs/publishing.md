@@ -6,6 +6,11 @@ Use an npm user or organization scope you control. The examples below assume you
 have publishing rights to `@coastlinecreations`; replace that scope if needed.
 The example versions must not already exist under those package names.
 
+`@coastlinecreations/nucleation@0.10.24` is now published and pinned by this renderer.
+To publish the renderer against that release, start at step 2. Step 1 records the
+Nucleation release process; use a new unused version throughout before publishing
+another Nucleation release.
+
 Prerequisites: Node 24, npm, Rust with the `wasm32-unknown-unknown` target,
 and an npm account with the required publishing/2FA setup. Authenticate with
 `npm login --registry=https://registry.npmjs.org`.

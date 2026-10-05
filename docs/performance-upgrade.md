@@ -4,13 +4,13 @@
 
 - Vite 4.5.14 → 8.3.2, using Rolldown, an ES module configuration, and worker plugin factories.
 - Three.js 0.184.0 → 0.186.1, matching types 0.186.0 and postprocessing 6.39.5.
-- Nucleation 0.2.18 → **0.10.4**, pinned intentionally.
+- Nucleation 0.2.18 → **@coastlinecreations/nucleation 0.10.24**, pinned through the `nucleation` npm alias.
 - Compatible maintenance updates for the test, lint, formatting, DOM and archive dependencies.
 - Removed unused packages and the obsolete creative-controls dependency. Creative controls now share the renderer's Three.js version. Development-only packages no longer appear in runtime dependencies. The old generic CORS proxy was replaced by a loopback-only Node helper for the fixed Minecraft client URL; npm audit reports no vulnerabilities.
 
-Nucleation 0.10.4 is the newest published version verified to include both simulation and circuit WASM functions. Every published later release through 0.10.24 lacks the `MchprsWorld_*` and `CircuitBuilder_*` exports, although the JavaScript API declares them. Calling their constructors in 0.10.24 throws `wasm.MchprsWorld_create is not a function` or `wasm.CircuitBuilder_create is not a function`. Upgrading this pin requires real WASM simulation and circuit tests, not just TypeScript checks.
+The renderer previously pinned unscoped `nucleation@0.10.4` because the later upstream packages checked through 0.10.24 lacked `MchprsWorld_*` and `CircuitBuilder_*` WASM exports despite declaring their JavaScript APIs. The scoped fork fixes that packaging defect. Its published archive passes real simulation, circuit and typed rendering tests through both npm entry points.
 
-The local 0.10.24 fork now fixes that packaging defect and passes those real WASM tests. `npm run nucleation:local` builds, tests and installs it without changing the registry pin. See [the fork workflow and extraction benchmark](nucleation-fork.md).
+`npm ci` now installs the published fork. `npm run nucleation:local` remains available for optional sibling-checkout development without changing the registry pin. See [the fork workflow and extraction benchmark](nucleation-fork.md).
 
 ## Rendering changes
 
@@ -48,10 +48,10 @@ schematic.set_block(0, 0, 0, "minecraft:stone");
 
 The renderer initializes this automatically. Initialization is shared and retryable. Browser UMD consumers can provide the initialized native module as `globalThis.Nucleation`, alongside `globalThis.THREE`.
 
-Nucleation 0.10.4 has two relevant limitations:
+The published fork enables lazy typed extraction and immediate cleanup of owned block storage. The adapter also retains compatibility with unscoped 0.10.4, which has two relevant limitations:
 
 - Its palette API omits block properties. The adapter reconstructs a compact render snapshot using bounded chunk reads, then reuses it until mutation. The first scan is synchronous. Direct edits through `wrapper.native` require `wrapper.invalidateCaches()` afterwards; wrapper mutation methods invalidate automatically.
-- Native handles use garbage-collection finalizers. On 0.10.4, compatibility `free()` methods release JavaScript references and render caches. On the local 0.10.24 fork, owned schematic contents are also cleared immediately through `clearContents()` while opaque handle destruction remains with the finalizer.
+- Native handles use garbage-collection finalizers. On 0.10.4, compatibility `free()` methods release JavaScript references and render caches. On the scoped 0.10.24 fork, owned schematic contents are also cleared immediately through `clearContents()` while opaque handle destruction remains with the finalizer.
 
 The legacy simulation `get_truth_table()` method has no native equivalent in this release. Native graph exports now expose the generated `RedstoneGraph` API. Core simulation, custom IO, circuit execution, region attachment, diffs, builders, block states, nested SNBT and schematic/litematic round-trips have regression coverage.
 
@@ -59,4 +59,4 @@ CommonJS loading was checked separately. Three.js 0.186 emits its upstream `THRE
 
 ## Validation
 
-`npm run verify` checks formatting, lint with zero tolerated warnings, both TypeScript configurations, unit and real WASM tests, five local proxy tests, library generation, and three browser tests. The local fork passes 408 unit/WASM tests and all eight proxy/browser tests. Browser coverage exercises source, ES and classic UMD distributions: entity families, concurrent rebuilds, repeated reopen, local-file loading and populated 1280×720 image export.
+`npm run verify` checks formatting, lint with zero tolerated warnings, both TypeScript configurations, unit and real WASM tests, five local proxy tests, library generation, and three browser tests. The scoped fork passes 408 unit/WASM tests and all eight proxy/browser tests. Browser coverage exercises source, ES and classic UMD distributions: entity families, concurrent rebuilds, repeated reopen, local-file loading and populated 1280×720 image export.

@@ -1,5 +1,5 @@
 {
-	"name": "schematic-renderer",
+	"name": "@coastlinecreations/schematic-renderer",
 	"version": "1.7.0",
 	"packageManager": "npm@11.17.0",
 	"allowScripts": {
@@ -110,7 +110,7 @@
 		"lil-gui": "^0.19.2",
 		"lodash": "^4.18.1",
 		"n8ao": "^1.10.3",
-		"nucleation": "0.10.4",
+		"nucleation": "npm:@coastlinecreations/nucleation@0.10.24",
 		"postprocessing": "^6.39.5",
 		"three": "^0.186.1"
 	},

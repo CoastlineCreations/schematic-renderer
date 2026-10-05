@@ -32,7 +32,9 @@ const { createChunkIterator, getRenderPalette, getRenderBounds, invalidateRender
 const schematic = Schematic.create("typed-stream-benchmark");
 try {
 	if (typeof schematic.renderRegionsJson !== "function") {
-		throw new Error("Install the local fork first: npm run nucleation:local");
+		throw new Error(
+			"Install the pinned Nucleation fork with npm ci, or run npm run nucleation:local"
+		);
 	}
 	const min = -Math.floor(side / 2);
 	const max = min + side - 1;
