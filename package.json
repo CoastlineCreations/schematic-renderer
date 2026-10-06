@@ -1,6 +1,6 @@
 {
 	"name": "@coastlinecreations/schematic-renderer",
-	"version": "1.7.0",
+	"version": "1.8.0",
 	"packageManager": "npm@11.17.0",
 	"allowScripts": {
 		"fsevents@2.3.2": false,
